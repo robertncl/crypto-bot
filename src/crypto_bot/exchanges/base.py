@@ -45,5 +45,5 @@ class ExchangeAdapter(ABC):
     def cancel_order(self, order_id: str, symbol: str) -> None:
         """Cancel an open order. Requires API keys."""
 
-    def close(self) -> None:
-        """Release any underlying resources. Safe to call multiple times."""
+    def close(self) -> None:  # noqa: B027 - intentional no-op default; ccxt adapter overrides
+        """Release any underlying resources. Safe to call multiple times (default: no-op)."""

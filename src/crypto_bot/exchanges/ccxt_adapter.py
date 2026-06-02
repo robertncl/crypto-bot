@@ -7,15 +7,7 @@ imported) so the rest of the bot — and its unit tests — run without the depe
 
 from __future__ import annotations
 
-from crypto_bot.core.models import (
-    Order,
-    OrderRequest,
-    OrderStatus,
-    OrderType,
-)
-from crypto_bot.core.models import (
-    Candle as _Candle,
-)
+from crypto_bot.core.models import Candle, Order, OrderRequest, OrderStatus, OrderType
 from crypto_bot.exchanges.base import ExchangeAdapter, ExchangeError
 
 try:
@@ -85,12 +77,12 @@ class CCXTAdapter(ExchangeAdapter):
         except ccxt.BaseError as exc:
             raise ExchangeError(f"failed to load markets on {self.name}: {exc}") from exc
 
-    def fetch_candles(self, symbol: str, timeframe: str, limit: int = 200) -> list[_Candle]:
+    def fetch_candles(self, symbol: str, timeframe: str, limit: int = 200) -> list[Candle]:
         try:
             rows = self.client.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
         except ccxt.BaseError as exc:
             raise ExchangeError(f"fetch_ohlcv failed for {symbol} on {self.name}: {exc}") from exc
-        return [_Candle.from_ccxt(row) for row in rows]
+        return [Candle.from_ccxt(row) for row in rows]
 
     def fetch_last_price(self, symbol: str) -> float:
         try:

@@ -18,7 +18,7 @@ import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 
-from crypto_bot.core.models import Order, OrderRequest, OrderSide, OrderStatus, OrderType
+from crypto_bot.core.models import Order, OrderRequest, OrderSide, OrderStatus
 from crypto_bot.exchanges.base import ExchangeAdapter
 
 
