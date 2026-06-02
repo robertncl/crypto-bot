@@ -48,9 +48,10 @@ the risk manager → submits it to the broker → books the fill in the portfoli
 Requires Python 3.10+.
 
 ```bash
-# 1. Install (editable, with dev tools)
+# 1. Install pinned, hash-verified dependencies, then the bot itself
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
+pip install --require-hashes -r requirements-dev.txt   # exact versions, sha256-checked
+pip install -e . --no-deps                             # install the crypto-bot package
 
 # 2. Create your config from the template
 cp config/config.example.yaml config/config.yaml
@@ -155,6 +156,31 @@ Import it once (e.g. in `strategies/registry.py`) so the decorator runs, then re
 
 **Add an exchange** — for ccxt venues just change `exchange.name`. For a non-ccxt venue,
 implement the `ExchangeAdapter` interface in `src/crypto_bot/exchanges/`.
+
+## Dependencies & reproducible installs
+
+Dependencies are **fully pinned and hash-locked** for reproducible, tamper-evident installs:
+
+- `requirements.in` / `requirements-dev.in` — the loose, human-edited source lists.
+- `requirements.txt` / `requirements-dev.txt` — generated lock files pinning every package
+  (including transitive deps) to an exact version **and** its `sha256` hashes.
+- `pyproject.toml` carries compatible lower-bound (`>=`) ranges for packaging.
+
+Install exactly what's locked, with hash verification (pip rejects any package whose hash
+doesn't match):
+
+```bash
+pip install --require-hashes -r requirements-dev.txt   # dev (includes runtime)
+pip install --require-hashes -r requirements.txt       # runtime only
+```
+
+Upgrade everything to the latest and regenerate the locks (needs `pip-tools`):
+
+```bash
+pip install pip-tools
+pip-compile --generate-hashes --upgrade --allow-unsafe requirements.in
+pip-compile --generate-hashes --upgrade --allow-unsafe requirements-dev.in
+```
 
 ## Testing
 

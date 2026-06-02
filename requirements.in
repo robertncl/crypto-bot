@@ -1,0 +1,6 @@
+# Direct runtime dependencies (loose, human-edited).
+# Compile to the pinned + hash-locked requirements.txt with:
+#   pip-compile --generate-hashes --upgrade requirements.in
+ccxt
+PyYAML
+python-dotenv

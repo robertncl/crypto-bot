@@ -1,0 +1,7 @@
+# Direct dev/test dependencies (loose, human-edited).
+# Includes the runtime set, so `pip install -r requirements-dev.txt` gives a full
+# dev environment in one shot. Compile to the pinned + hash-locked file with:
+#   pip-compile --generate-hashes --upgrade requirements-dev.in
+-r requirements.in
+pytest
+ruff
