@@ -1,0 +1,53 @@
+# Crypto-bot configuration. Copy to config/config.yaml and edit.
+# Secrets (API keys) do NOT belong here — they live in .env.
+
+# paper  = simulate fills against live market data (no real funds, no keys needed)
+# live   = place REAL orders on the exchange (requires API keys + explicit opt-in)
+mode: paper
+
+exchange:
+  # ccxt exchange id: binance | bybit | coinbase  (and 100+ others)
+  name: binance
+  # Use the exchange testnet/sandbox endpoints when available (great for live-mode dry runs).
+  sandbox: false
+  # Optional ccxt options, e.g. defaultType for futures. Leave empty for spot.
+  options: {}
+
+# Symbols to trade, in ccxt unified format BASE/QUOTE.
+# For the paper portfolio, all symbols should share one quote currency (cash).
+symbols:
+  - BTC/USDT
+  - ETH/USDT
+
+# Candle timeframe and how often to poll for new data.
+timeframe: 1h
+poll_seconds: 60
+
+strategy:
+  name: ma_crossover
+  params:
+    fast_period: 12
+    slow_period: 26
+    ma_type: ema       # ema | sma
+
+risk:
+  # Fraction of total equity to allocate per new position (0.10 = 10%).
+  position_pct: 0.10
+  # Max simultaneous open positions across all symbols.
+  max_open_positions: 3
+  # Protective exits, checked every poll against each position's entry price.
+  stop_loss_pct: 0.05      # close if price falls 5% below entry (0 to disable)
+  take_profit_pct: 0.15    # close if price rises 15% above entry (0 to disable)
+  # Kill-switch: halt all trading if equity drops this far below its peak.
+  max_drawdown_pct: 0.25
+
+# Paper-trading simulation parameters.
+paper:
+  starting_cash: 10000.0   # in the quote currency (e.g. USDT)
+  quote_currency: USDT
+  fee_rate: 0.001          # 0.1% taker fee
+  slippage_pct: 0.0005     # 0.05% simulated slippage on market fills
+
+logging:
+  level: INFO              # DEBUG | INFO | WARNING | ERROR
+  file: logs/crypto-bot.log

@@ -1,0 +1,7 @@
+# Core runtime dependencies
+ccxt>=4.2.0           # unified multi-exchange API (Binance, Bybit, Coinbase, 100+)
+PyYAML>=6.0           # config files
+python-dotenv>=1.0.0  # load API keys from .env
+
+# Dev / test (install with: pip install -r requirements-dev.txt)
+# pytest>=8.0
