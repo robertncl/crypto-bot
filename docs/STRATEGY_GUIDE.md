@@ -72,10 +72,10 @@ time — it's to **win more on winners than you lose on losers, over many trades
 
 ---
 
-## 4. The strategy this bot ships with: Moving-Average (MA) Crossover
+## 4. The first strategy to learn: Moving-Average (MA) Crossover
 
-This is the classic beginner **trend-following** strategy, and a great one to learn on because
-you can see it on a chart.
+The bot ships with four strategies (see §6), but start here: this is the classic beginner
+**trend-following** strategy, and a great one to learn on because you can see it on a chart.
 
 **A moving average (MA)** is just the average price over the last *N* candles, recalculated
 each candle. It smooths out the noise so you can see the underlying direction. A *fast* MA
@@ -166,15 +166,58 @@ move together, so don't assume 5 coins = 5x safer.
 
 ---
 
-## 6. Other common strategies (for when you outgrow the starter)
+## 6. The other strategies this bot ships — and choosing a risk profile
 
-- **Dollar-Cost Averaging (DCA)** — buy a fixed dollar amount on a schedule regardless of price.
-  Boring, low-effort, and historically hard to beat for long-term holders. The *lowest-stress*
-  starting point for most people.
-- **RSI mean-reversion** — RSI is a 0–100 "overbought/oversold" gauge. Buy when RSI is low
-  (e.g. < 30), sell when high (e.g. > 70). A mean-reversion counterpart to MA crossover. (RSI is
-  already implemented in `indicators/` — writing this strategy is a great first exercise.)
-- **Breakout** — buy when price breaks above a recent high (betting the move continues).
+You don't have to stop at MA crossover. The bot ships **four** strategies (run
+`crypto-bot strategies` to list them) — two from each family in §3:
+
+**Trend-following (buy strength):**
+- **MA crossover** (`ma_crossover`) — the worked example in §4. *Balanced.*
+- **Breakout** (`breakout`) — buys when price punches *above* its highest high of the last N
+  candles (a "Donchian channel"), betting a fresh move has begun; sells on a new N-bar low. It
+  rides big trends hard but gets chopped up in sideways markets, which makes it the most
+  *aggressive* of the four — give it a wide stop and a generous take-profit.
+
+**Mean-reversion (buy weakness):**
+- **RSI reversion** (`rsi_reversion`) — RSI is a 0–100 "overbought/oversold" gauge. This buys
+  as RSI *climbs back above* the oversold line (e.g. up through 30) — waiting for the bounce to
+  actually start instead of catching a falling knife — and sells as it rolls back below
+  overbought (70). *Balanced, contrarian.*
+- **Bollinger bands** (`bollinger`) — wraps a moving average in an envelope that widens when the
+  market is volatile and tightens when it's calm. It buys when price is stretched *below* the
+  lower band and sells when stretched *above* the upper one. Because it demands a genuine
+  statistical stretch (2 standard deviations by default) before acting, it trades rarely on calm
+  majors — the most *conservative* of the four.
+
+### Your "risk profile" is the whole recipe, not one setting
+
+Conservative vs. aggressive isn't a single dial — it's the *combination* of which strategy, on
+what timeframe, with how much size and how tight a stop. A slow Bollinger strategy on the daily
+chart risking 5% per trade is cautious; a 1-hour breakout risking 20% is not. The bot bundles
+three ready-made recipes in [`config/profiles/`](../config/profiles/):
+
+| Profile | Strategy | Timeframe | Position size | Max positions | Stop / take-profit |
+| --- | --- | --- | --- | --- | --- |
+| `conservative.yaml` | Bollinger | 1d | 5% | 2 | 5% / 12% |
+| `balanced.yaml` | RSI reversion | 4h | 10% | 3 | 6% / 15% |
+| `aggressive.yaml` | Breakout | 1h | 20% | 5 | 8% / 30% |
+
+Run one straight away — all three are **paper** mode, so nothing is at risk:
+
+```bash
+crypto-bot run --once --config config/profiles/conservative.yaml
+```
+
+Then read the logs, change **one** thing, and run it again. These are training wheels to learn
+from — *not* advice about what will make money. There is no "best" profile; aggressive simply
+means bigger swings in both directions.
+
+### Still just ideas (good next exercises)
+
+- **Dollar-Cost Averaging (DCA)** — buy a fixed amount on a schedule regardless of price.
+  Boring, low-effort, historically hard to beat for long-term holders, and the lowest-stress
+  approach of all. (Heads-up: the starter holds at most one position per symbol and doesn't
+  *average in*, so true DCA needs a small extension to the risk manager — a nice project.)
 - **Grid trading** — place a ladder of buy/sell orders across a price range to profit from
   oscillation. Great in sideways markets, dangerous in strong trends.
 

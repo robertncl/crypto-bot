@@ -7,7 +7,10 @@ by ``name`` in config. ``build_strategy`` is what the engine calls at startup.
 from __future__ import annotations
 
 from crypto_bot.strategies.base import Strategy
+from crypto_bot.strategies.bollinger import BollingerReversion
+from crypto_bot.strategies.breakout import Breakout
 from crypto_bot.strategies.ma_crossover import MACrossover
+from crypto_bot.strategies.rsi_reversion import RSIReversion
 
 _REGISTRY: dict[str, type[Strategy]] = {}
 
@@ -35,3 +38,6 @@ def available_strategies() -> list[str]:
 
 # Built-in strategies.
 register_strategy(MACrossover)
+register_strategy(RSIReversion)
+register_strategy(Breakout)
+register_strategy(BollingerReversion)

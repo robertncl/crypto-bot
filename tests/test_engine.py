@@ -125,3 +125,24 @@ def test_engine_respects_drawdown_kill_switch():
     engine.run_once()
 
     assert not engine.portfolio.has_position("BTC/USDT")
+
+
+def test_engine_runs_a_registered_breakout_strategy():
+    # Proves a newly-added strategy flows registry -> engine -> risk -> broker -> portfolio,
+    # not just in isolation. The engine is strategy-agnostic, so this guards the wiring.
+    from crypto_bot.strategies.registry import build_strategy
+
+    exchange = FakeExchange([5, 5, 5, 5, 10])  # close breaks the prior 3-bar high -> BUY
+    config = _config()
+    config.strategy = StrategyConfig(name="breakout", params={"lookback": 3})
+
+    strategy = build_strategy(config.strategy.name, config.strategy.params)
+    portfolio = Portfolio(cash=config.paper.starting_cash, quote_currency="USDT")
+    engine = Engine(config, exchange, strategy, RiskManager(config.risk), portfolio)
+    engine.broker = PaperBroker(engine.last_price, fee_rate=0.0, slippage_pct=0.0)
+
+    engine.run_once()
+
+    pos = engine.portfolio.positions["BTC/USDT"]
+    assert pos.amount == 50.0  # 50% of 1000 equity at price 10
+    assert pos.entry_price == 10.0

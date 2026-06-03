@@ -1,0 +1,45 @@
+# ── BALANCED risk profile ──────────────────────────────────────────────────
+# A middle-of-the-road setup: contrarian RSI mean-reversion on majors at a medium
+# timeframe, with moderate sizing and a classic 1:2.5 risk:reward. A sensible
+# default once you've understood paper trading.
+#
+# Run: crypto-bot run --config config/profiles/balanced.yaml
+mode: paper
+
+exchange:
+  name: binance
+  sandbox: false
+  options: {}
+
+symbols:
+  - BTC/USDT
+  - ETH/USDT
+  - SOL/USDT
+
+# Medium timeframe — a balance between responsiveness and noise.
+timeframe: 4h
+poll_seconds: 60
+
+strategy:
+  name: rsi_reversion      # buy the recovery out of oversold, sell the roll-over from overbought
+  params:
+    period: 14
+    oversold: 30
+    overbought: 70
+
+risk:
+  position_pct: 0.10       # 10% of equity per position
+  max_open_positions: 3
+  stop_loss_pct: 0.06
+  take_profit_pct: 0.15    # 2.5:1 reward:risk
+  max_drawdown_pct: 0.25
+
+paper:
+  starting_cash: 10000.0
+  quote_currency: USDT
+  fee_rate: 0.001
+  slippage_pct: 0.0005
+
+logging:
+  level: INFO
+  file: logs/crypto-bot.log

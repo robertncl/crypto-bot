@@ -95,3 +95,76 @@ def moving_average(values: list[Number], period: int, kind: str = "ema") -> list
     if kind == "sma":
         return sma(values, period)
     raise ValueError(f"unknown moving-average kind: {kind!r} (expected 'ema' or 'sma')")
+
+
+def stddev(values: list[Number], period: int) -> list[Number | None]:
+    """Rolling **population** standard deviation over a trailing window of ``period``.
+
+    Population (divide by N, not N-1) is the convention Bollinger Bands use. Output is
+    left-padded with ``None`` until the first full window, like the moving averages.
+    """
+    if period <= 0:
+        raise ValueError("period must be a positive integer")
+    out: list[Number | None] = [None] * len(values)
+    window: deque[Number] = deque()
+    running = 0.0
+    running_sq = 0.0
+    for i, v in enumerate(values):
+        window.append(v)
+        running += v
+        running_sq += v * v
+        if len(window) > period:
+            old = window.popleft()
+            running -= old
+            running_sq -= old * old
+        if len(window) == period:
+            mean = running / period
+            # Clamp tiny negatives from floating-point error before the square root.
+            variance = max(0.0, running_sq / period - mean * mean)
+            out[i] = variance**0.5
+    return out
+
+
+def bollinger_bands(
+    values: list[Number], period: int = 20, num_std: float = 2.0
+) -> tuple[list[Number | None], list[Number | None], list[Number | None]]:
+    """Bollinger Bands: ``(lower, middle, upper)`` where middle is the SMA and the
+    bands sit ``num_std`` population standard deviations either side of it.
+
+    Each returned list is aligned with ``values`` and left-padded with ``None`` over
+    the warm-up period.
+    """
+    middle = sma(values, period)
+    sd = stddev(values, period)
+    lower: list[Number | None] = [None] * len(values)
+    upper: list[Number | None] = [None] * len(values)
+    for i, (m, s) in enumerate(zip(middle, sd, strict=True)):
+        if m is None or s is None:
+            continue
+        lower[i] = m - num_std * s
+        upper[i] = m + num_std * s
+    return lower, middle, upper
+
+
+def highest(values: list[Number], period: int) -> list[Number | None]:
+    """Rolling maximum over a trailing window of ``period`` values (Donchian upper)."""
+    return _rolling_extreme(values, period, max)
+
+
+def lowest(values: list[Number], period: int) -> list[Number | None]:
+    """Rolling minimum over a trailing window of ``period`` values (Donchian lower)."""
+    return _rolling_extreme(values, period, min)
+
+
+def _rolling_extreme(values: list[Number], period: int, pick) -> list[Number | None]:
+    if period <= 0:
+        raise ValueError("period must be a positive integer")
+    out: list[Number | None] = [None] * len(values)
+    window: deque[Number] = deque()
+    for i, v in enumerate(values):
+        window.append(v)
+        if len(window) > period:
+            window.popleft()
+        if len(window) == period:
+            out[i] = pick(window)
+    return out

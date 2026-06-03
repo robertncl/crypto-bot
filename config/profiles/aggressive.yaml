@@ -1,0 +1,47 @@
+# ── AGGRESSIVE risk profile ────────────────────────────────────────────────
+# Momentum-chasing: Donchian breakouts on a fast timeframe across more (and
+# higher-beta) pairs, with large positions and wide stops so the occasional big
+# trend pays for the frequent whipsaws. High risk, high variance — paper-trade
+# this hard before believing it.
+#
+# Run: crypto-bot run --config config/profiles/aggressive.yaml
+mode: paper
+
+exchange:
+  name: binance
+  sandbox: false
+  options: {}
+
+# More pairs, including higher-beta alts that trend harder (and crash harder).
+symbols:
+  - BTC/USDT
+  - ETH/USDT
+  - SOL/USDT
+  - BNB/USDT
+  - XRP/USDT
+
+# Fast timeframe — more breakouts, more noise, more trades.
+timeframe: 1h
+poll_seconds: 60
+
+strategy:
+  name: breakout           # buy new highs, sell new lows
+  params:
+    lookback: 20           # 20-bar Donchian channel
+
+risk:
+  position_pct: 0.20       # 20% of equity per position — concentrated bets
+  max_open_positions: 5    # fully deployed across all symbols
+  stop_loss_pct: 0.08      # wider stop to let breakouts breathe
+  take_profit_pct: 0.30    # let winners run (3.75:1 reward:risk)
+  max_drawdown_pct: 0.40   # tolerate a deep drawdown before halting
+
+paper:
+  starting_cash: 10000.0
+  quote_currency: USDT
+  fee_rate: 0.001
+  slippage_pct: 0.0005
+
+logging:
+  level: INFO
+  file: logs/crypto-bot.log

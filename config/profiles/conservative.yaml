@@ -1,0 +1,44 @@
+# ── CONSERVATIVE risk profile ──────────────────────────────────────────────
+# Capital-preservation first: a volatility-aware mean-reversion strategy on major
+# pairs at a slow timeframe, small position sizes, and a tight drawdown kill-switch.
+# Few, high-quality trades; the goal is to survive, not to win big.
+#
+# Copy to config/config.yaml (or run: crypto-bot run --config config/profiles/conservative.yaml)
+mode: paper
+
+exchange:
+  name: binance
+  sandbox: false
+  options: {}
+
+# Majors only — the deepest, least-manipulated markets.
+symbols:
+  - BTC/USDT
+  - ETH/USDT
+
+# High timeframe = far fewer, higher-quality signals and much lower fee drag.
+timeframe: 1d
+poll_seconds: 60
+
+strategy:
+  name: bollinger          # buy statistically stretched dips, sell stretched rips
+  params:
+    period: 20
+    num_std: 2.0           # require a genuine 2σ stretch before acting
+
+risk:
+  position_pct: 0.05       # only 5% of equity per position
+  max_open_positions: 2    # minimal concurrent exposure
+  stop_loss_pct: 0.05      # cut losers quickly
+  take_profit_pct: 0.12    # ~2.4:1 reward:risk
+  max_drawdown_pct: 0.15   # halt early if things go wrong
+
+paper:
+  starting_cash: 10000.0
+  quote_currency: USDT
+  fee_rate: 0.001
+  slippage_pct: 0.0005
+
+logging:
+  level: INFO
+  file: logs/crypto-bot.log
