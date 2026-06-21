@@ -74,7 +74,7 @@ time — it's to **win more on winners than you lose on losers, over many trades
 
 ## 4. The first strategy to learn: Moving-Average (MA) Crossover
 
-The bot ships with six strategies (see §6), but start here: this is the classic beginner
+The bot ships with seven strategies (see §6), but start here: this is the classic beginner
 **trend-following** strategy, and a great one to learn on because you can see it on a chart.
 
 **A moving average (MA)** is just the average price over the last *N* candles, recalculated
@@ -168,8 +168,9 @@ move together, so don't assume 5 coins = 5x safer.
 
 ## 6. The other strategies this bot ships — and choosing a risk profile
 
-You don't have to stop at MA crossover. The bot ships **six** strategies (run
-`crypto-bot strategies` to list them) — four trend/momentum and two mean-reversion:
+You don't have to stop at MA crossover. The bot ships **seven** strategies (run
+`crypto-bot strategies` to list them) — four trend/momentum, two mean-reversion, and one
+scheduled accumulator:
 
 **Trend-following / momentum (buy strength):**
 - **MA crossover** (`ma_crossover`) — the worked example in §4. *Balanced.*
@@ -201,12 +202,22 @@ You don't have to stop at MA crossover. The bot ships **six** strategies (run
   statistical stretch (2 standard deviations by default) before acting, it trades rarely on calm
   majors — the most *conservative* of the six.
 
+**Scheduled accumulation (buy on a clock, ignore price):**
+- **DCA / Auto-Invest** (`dca`) — the odd one out: it doesn't react to price at all. It buys a
+  fixed slice every `every` candles and **holds**, averaging your entry across the whole period
+  — the software version of a centralized-exchange "Auto-Invest" *earn* product, and historically
+  hard to beat for long-term holders. It's the one strategy that *adds to* a position over time
+  rather than holding a single entry, so it needs `risk.allow_averaging_in: true` (cap the stack
+  with `risk.max_position_pct`). Because it accumulates rather than flips, the
+  [`dca.yaml`](../config/profiles/dca.yaml) profile turns the stop-loss and take-profit *off* —
+  selling low would defeat the purpose. *Earn / buy-and-hold.*
+
 ### Your "risk profile" is the whole recipe, not one setting
 
 Conservative vs. aggressive isn't a single dial — it's the *combination* of which strategy, on
 what timeframe, with how much size and how tight a stop. A slow Bollinger strategy on the daily
 chart risking 5% per trade is cautious; a 1-hour breakout risking 20% is not. The bot bundles
-three ready-made recipes in [`config/profiles/`](../config/profiles/):
+five ready-made recipes in [`config/profiles/`](../config/profiles/):
 
 | Profile | Strategy | Timeframe | Position size | Max positions | Stop / take-profit |
 | --- | --- | --- | --- | --- | --- |
@@ -214,8 +225,9 @@ three ready-made recipes in [`config/profiles/`](../config/profiles/):
 | `balanced.yaml` | RSI reversion | 4h | 10% | 3 | 6% / 15% |
 | `trend.yaml` | Supertrend | 4h | 15% | 3 | 7% / 21% |
 | `aggressive.yaml` | Breakout | 1h | 20% | 5 | 8% / 30% |
+| `dca.yaml` | DCA / Auto-Invest | 1d | 5% (averages in) | 2 | off (accumulate & hold) |
 
-Run one straight away — all three are **paper** mode, so nothing is at risk:
+Run one straight away — all five are **paper** mode, so nothing is at risk:
 
 ```bash
 crypto-bot run --once --config config/profiles/conservative.yaml
@@ -227,10 +239,11 @@ means bigger swings in both directions.
 
 ### Still just ideas (good next exercises)
 
-- **Dollar-Cost Averaging (DCA)** — buy a fixed amount on a schedule regardless of price.
-  Boring, low-effort, historically hard to beat for long-term holders, and the lowest-stress
-  approach of all. (Heads-up: the starter holds at most one position per symbol and doesn't
-  *average in*, so true DCA needs a small extension to the risk manager — a nice project.)
+- **Fixed-quote DCA** — the shipped `dca` strategy sizes each buy as a *percentage of equity*,
+  so the tranche grows as your account does. Classic Auto-Invest instead buys a fixed *cash*
+  amount (e.g. $100) every period. Adding a fixed-quote sizing mode to the risk manager is a
+  small, satisfying extension. (Plain percentage-DCA itself is already done — run
+  [`config/profiles/dca.yaml`](../config/profiles/dca.yaml).)
 - **Grid trading** — place a ladder of buy/sell orders across a price range to profit from
   oscillation. Great in sideways markets, dangerous in strong trends.
 

@@ -245,11 +245,11 @@ src/crypto_bot/
   cli.py            # command-line interface
   config.py         # YAML + env config loading & validation
   indicators/       # pure-Python SMA / EMA / RSI / stddev / Bollinger / Donchian / MACD / ATR / Supertrend
-  strategies/       # Strategy interface, registry, 6 built-in strategies
-  risk/             # position sizing, stops, drawdown kill-switch
+  strategies/       # Strategy interface, registry, 7 built-in strategies
+  risk/             # position sizing, stops, averaging-in, drawdown kill-switch
   exchanges/        # ExchangeAdapter interface + ccxt implementation
   core/             # models, portfolio, brokers (paper/live), engine
-config/profiles/    # ready-to-run conservative / balanced / trend / aggressive configs
+config/profiles/    # ready-to-run conservative / balanced / trend / aggressive / dca configs
 tests/              # offline unit + engine tests
 docs/STRATEGY_GUIDE.md   # beginner-friendly trading-strategy primer
 ```
@@ -257,8 +257,8 @@ docs/STRATEGY_GUIDE.md   # beginner-friendly trading-strategy primer
 ## Roadmap
 
 - Backtesting engine over historical OHLCV (the paper broker + engine are close already).
-- More strategies (grid, DCA). MACD, Supertrend, RSI mean-reversion, Donchian breakout, and
-  Bollinger bands are done.
+- More strategies (grid trading; fixed-quote DCA). DCA/Auto-Invest, MACD, Supertrend, RSI
+  mean-reversion, Donchian breakout, and Bollinger bands are done.
 - `Decimal` money math respecting per-market precision.
 - Live position reconciliation from exchange state; partial-fill handling.
 - Persistence (SQLite) for trade history and crash recovery; notifications.
