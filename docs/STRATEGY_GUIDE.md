@@ -74,7 +74,7 @@ time — it's to **win more on winners than you lose on losers, over many trades
 
 ## 4. The first strategy to learn: Moving-Average (MA) Crossover
 
-The bot ships with four strategies (see §6), but start here: this is the classic beginner
+The bot ships with six strategies (see §6), but start here: this is the classic beginner
 **trend-following** strategy, and a great one to learn on because you can see it on a chart.
 
 **A moving average (MA)** is just the average price over the last *N* candles, recalculated
@@ -168,15 +168,27 @@ move together, so don't assume 5 coins = 5x safer.
 
 ## 6. The other strategies this bot ships — and choosing a risk profile
 
-You don't have to stop at MA crossover. The bot ships **four** strategies (run
-`crypto-bot strategies` to list them) — two from each family in §3:
+You don't have to stop at MA crossover. The bot ships **six** strategies (run
+`crypto-bot strategies` to list them) — four trend/momentum and two mean-reversion:
 
-**Trend-following (buy strength):**
+**Trend-following / momentum (buy strength):**
 - **MA crossover** (`ma_crossover`) — the worked example in §4. *Balanced.*
+- **MACD** (`macd`) — takes the *gap* between a fast and a slow moving average (the "MACD
+  line") and smooths it again into a "signal line." It buys when the MACD line crosses *above*
+  the signal line and sells when it crosses below — the same crossover idea as §4, but on the
+  momentum of the trend rather than price directly, which filters some of the noise. Classic
+  settings are 12 / 26 / 9. *Balanced.*
+- **Supertrend** (`supertrend`) — draws a trailing line a multiple of recent volatility (the
+  *Average True Range*) away from price. The line sits *below* price in an uptrend and *above*
+  it in a downtrend, and the strategy buys/sells when price closes through it and the trend
+  "flips." Because the gap scales with volatility, it gives a trend room to breathe and stays
+  in big moves far longer than an oscillator would. One of the most popular indicators in
+  modern crypto trading; defaults are an ATR period of 10 and a 3× multiplier. *Balanced /
+  momentum.*
 - **Breakout** (`breakout`) — buys when price punches *above* its highest high of the last N
   candles (a "Donchian channel"), betting a fresh move has begun; sells on a new N-bar low. It
   rides big trends hard but gets chopped up in sideways markets, which makes it the most
-  *aggressive* of the four — give it a wide stop and a generous take-profit.
+  *aggressive* of the six — give it a wide stop and a generous take-profit.
 
 **Mean-reversion (buy weakness):**
 - **RSI reversion** (`rsi_reversion`) — RSI is a 0–100 "overbought/oversold" gauge. This buys
@@ -187,7 +199,7 @@ You don't have to stop at MA crossover. The bot ships **four** strategies (run
   market is volatile and tightens when it's calm. It buys when price is stretched *below* the
   lower band and sells when stretched *above* the upper one. Because it demands a genuine
   statistical stretch (2 standard deviations by default) before acting, it trades rarely on calm
-  majors — the most *conservative* of the four.
+  majors — the most *conservative* of the six.
 
 ### Your "risk profile" is the whole recipe, not one setting
 
@@ -200,6 +212,7 @@ three ready-made recipes in [`config/profiles/`](../config/profiles/):
 | --- | --- | --- | --- | --- | --- |
 | `conservative.yaml` | Bollinger | 1d | 5% | 2 | 5% / 12% |
 | `balanced.yaml` | RSI reversion | 4h | 10% | 3 | 6% / 15% |
+| `trend.yaml` | Supertrend | 4h | 15% | 3 | 7% / 21% |
 | `aggressive.yaml` | Breakout | 1h | 20% | 5 | 8% / 30% |
 
 Run one straight away — all three are **paper** mode, so nothing is at risk:

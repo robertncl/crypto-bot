@@ -1,14 +1,18 @@
 import pytest
 
 from crypto_bot.indicators.ta import (
+    atr,
     bollinger_bands,
     ema,
     highest,
     lowest,
+    macd,
     moving_average,
     rsi,
     sma,
     stddev,
+    supertrend,
+    true_range,
 )
 
 
@@ -91,3 +95,66 @@ def test_highest_and_lowest_rolling_window():
     values = [1, 3, 2, 5, 4]
     assert highest(values, 3) == [None, None, 3, 5, 5]
     assert lowest(values, 3) == [None, None, 1, 2, 2]
+
+
+def test_macd_line_is_fast_minus_slow_ema():
+    values = list(range(1, 40))
+    macd_line, _signal, _hist = macd(values, fast=12, slow=26, signal=9)
+    fast_ema, slow_ema = ema(values, 12), ema(values, 26)
+    # MACD line is undefined until the slow EMA exists (index slow - 1 = 25).
+    assert macd_line[:25] == [None] * 25
+    for i in range(25, len(values)):
+        assert macd_line[i] == pytest.approx(fast_ema[i] - slow_ema[i])
+
+
+def test_macd_histogram_is_line_minus_signal():
+    values = [float(v) for v in range(1, 50)]
+    macd_line, signal_line, hist = macd(values, fast=3, slow=6, signal=3)
+    for m, s, h in zip(macd_line, signal_line, hist, strict=True):
+        if s is None:
+            assert h is None
+        else:
+            assert h == pytest.approx(m - s)
+
+
+def test_macd_validates_periods():
+    with pytest.raises(ValueError):
+        macd([1, 2, 3], fast=6, slow=3)  # fast must be < slow
+
+
+def test_true_range_uses_prev_close():
+    highs = [10, 12, 11, 13]
+    lows = [8, 9, 9, 10]
+    closes = [9, 11, 10, 12]
+    # bar 0 has no previous close -> falls back to high - low = 2.
+    # bar 1: max(12-9, |12-9|, |9-9|) = 3; bar 2: max(2, 0, 2) = 2; bar 3: max(3, 3, 0) = 3.
+    assert true_range(highs, lows, closes) == [2, 3, 2, 3]
+
+
+def test_atr_wilder_smoothing():
+    highs = [10, 12, 11, 13]
+    lows = [8, 9, 9, 10]
+    closes = [9, 11, 10, 12]
+    # TR = [2, 3, 2, 3]; seed = mean(2, 3) = 2.5 at index 1, then Wilder-smoothed.
+    out = atr(highs, lows, closes, period=2)
+    assert out[0] is None
+    assert out[1] == pytest.approx(2.5)
+    assert out[2] == pytest.approx((2.5 * 1 + 2) / 2)
+    assert out[3] == pytest.approx((2.25 * 1 + 3) / 2)
+
+
+def test_supertrend_direction_flips_on_reversal():
+    closes = [100, 98, 96, 94, 92, 90, 88, 86, 100, 102]
+    line, direction = supertrend(closes, closes, closes, period=3, multiplier=1.0)
+    assert direction[:2] == [None, None]  # ATR warm-up
+    assert all(d in (1, -1) for d in direction[2:])
+    assert direction[7] == -1 and direction[8] == 1  # downtrend flips up
+    # In an uptrend the line trails *below* price; in a downtrend, above it.
+    assert line[8] is not None and line[8] <= closes[8]
+
+
+def test_supertrend_validates_inputs():
+    with pytest.raises(ValueError):
+        supertrend([1, 2], [1, 2], [1, 2], period=0)
+    with pytest.raises(ValueError):
+        supertrend([1, 2], [1, 2], [1, 2], multiplier=0)

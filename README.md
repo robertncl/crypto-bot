@@ -17,9 +17,10 @@ before ever touching real money.
 - **Paper trading by default** — simulates fills against *live* market data (with
   configurable fees and slippage). No API keys required.
 - **Live trading** — gated behind an explicit `--yes-i-understand-live` acknowledgement.
-- **Pluggable strategies** — a simple `Strategy` interface plus a registry. Ships with four:
-  trend-following **MA crossover** and **Donchian breakout**, plus mean-reverting **RSI** and
-  **Bollinger-band** strategies — spanning conservative to aggressive risk profiles.
+- **Pluggable strategies** — a simple `Strategy` interface plus a registry. Ships with six:
+  trend/momentum **MA crossover**, **Donchian breakout**, **MACD**, and volatility-adaptive
+  **Supertrend**, plus mean-reverting **RSI** and **Bollinger-band** strategies — spanning
+  conservative to aggressive risk profiles.
 - **Risk management** — fractional position sizing, max-open-positions cap, per-position
   stop-loss / take-profit, and a portfolio drawdown kill-switch.
 - **Dependency-light core** — indicators, strategies, risk, and the paper engine are pure
@@ -115,31 +116,34 @@ See [`config/config.example.yaml`](config/config.example.yaml) for the fully-com
 
 ### Strategies
 
-Four strategies ship built-in (list them with `crypto-bot strategies`). They cover both
+Six strategies ship built-in (list them with `crypto-bot strategies`). They cover both
 families — trend-following (buy strength) and mean-reversion (buy weakness) — across the
 risk spectrum:
 
 | `name` | Family | Temperament | Key params (defaults) |
 | --- | --- | --- | --- |
 | `ma_crossover` | Trend-following | Balanced | `fast_period` 12, `slow_period` 26, `ma_type` ema |
-| `rsi_reversion` | Mean-reversion | Balanced / contrarian | `period` 14, `oversold` 30, `overbought` 70 |
+| `macd` | Trend / momentum | Balanced | `fast_period` 12, `slow_period` 26, `signal_period` 9 |
+| `supertrend` | Trend-following | Balanced / momentum | `period` 10, `multiplier` 3.0 (ATR-based) |
 | `breakout` | Trend-following | Aggressive | `lookback` 20 (Donchian channel) |
+| `rsi_reversion` | Mean-reversion | Balanced / contrarian | `period` 14, `oversold` 30, `overbought` 70 |
 | `bollinger` | Mean-reversion | Conservative | `period` 20, `num_std` 2.0 |
 
-All four are **edge-triggered** (a signal fires once, on the bar the condition flips, not on
+All six are **edge-triggered** (a signal fires once, on the bar the condition flips, not on
 every bar after) and long-only. See [docs/STRATEGY_GUIDE.md](docs/STRATEGY_GUIDE.md) for how
 each one thinks and when it wins or loses.
 
 ### Risk profiles
 
 Risk lives in the *combination* of strategy, timeframe, position sizing, and stops — not any
-one knob. Three ready-to-run profiles in [`config/profiles/`](config/profiles/) bundle
+one knob. Four ready-to-run profiles in [`config/profiles/`](config/profiles/) bundle
 sensible combinations so you can compare temperaments without hand-tuning:
 
 | Profile | Strategy | Timeframe | Size / max positions | Stop / take-profit |
 | --- | --- | --- | --- | --- |
 | [`conservative`](config/profiles/conservative.yaml) | `bollinger` | 1d | 5% / 2 | 5% / 12% |
 | [`balanced`](config/profiles/balanced.yaml) | `rsi_reversion` | 4h | 10% / 3 | 6% / 15% |
+| [`trend`](config/profiles/trend.yaml) | `supertrend` | 4h | 15% / 3 | 7% / 21% |
 | [`aggressive`](config/profiles/aggressive.yaml) | `breakout` | 1h | 20% / 5 | 8% / 30% |
 
 ```bash
@@ -236,12 +240,12 @@ in-memory fake exchange, so the suite is fast and offline.
 src/crypto_bot/
   cli.py            # command-line interface
   config.py         # YAML + env config loading & validation
-  indicators/       # pure-Python SMA / EMA / RSI / stddev / Bollinger / Donchian
-  strategies/       # Strategy interface, registry, 4 built-in strategies
+  indicators/       # pure-Python SMA / EMA / RSI / stddev / Bollinger / Donchian / MACD / ATR / Supertrend
+  strategies/       # Strategy interface, registry, 6 built-in strategies
   risk/             # position sizing, stops, drawdown kill-switch
   exchanges/        # ExchangeAdapter interface + ccxt implementation
   core/             # models, portfolio, brokers (paper/live), engine
-config/profiles/    # ready-to-run conservative / balanced / aggressive configs
+config/profiles/    # ready-to-run conservative / balanced / trend / aggressive configs
 tests/              # offline unit + engine tests
 docs/STRATEGY_GUIDE.md   # beginner-friendly trading-strategy primer
 ```
@@ -249,8 +253,8 @@ docs/STRATEGY_GUIDE.md   # beginner-friendly trading-strategy primer
 ## Roadmap
 
 - Backtesting engine over historical OHLCV (the paper broker + engine are close already).
-- More strategies (grid, DCA, MACD). RSI mean-reversion, Donchian breakout, and Bollinger
-  bands are done.
+- More strategies (grid, DCA). MACD, Supertrend, RSI mean-reversion, Donchian breakout, and
+  Bollinger bands are done.
 - `Decimal` money math respecting per-market precision.
 - Live position reconciliation from exchange state; partial-fill handling.
 - Persistence (SQLite) for trade history and crash recovery; notifications.

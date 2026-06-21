@@ -1,0 +1,46 @@
+# ── TREND profile (Supertrend) ─────────────────────────────────────────────
+# Volatility-adaptive trend-following with the Supertrend indicator — one of the
+# most popular indicators in modern crypto algo-trading. The ATR-scaled trailing
+# line gives a move room to breathe in volatile conditions and tightens when calm,
+# staying in trends far longer than an oscillator would. Medium timeframe, moderate
+# sizing, and a wide-ish stop so the trend isn't shaken out by ordinary noise.
+#
+# Run: crypto-bot run --config config/profiles/trend.yaml
+mode: paper
+
+exchange:
+  name: binance
+  sandbox: false
+  options: {}
+
+symbols:
+  - BTC/USDT
+  - ETH/USDT
+  - SOL/USDT
+
+# Medium timeframe — fewer, higher-quality trend flips than an intraday chart.
+timeframe: 4h
+poll_seconds: 60
+
+strategy:
+  name: supertrend         # buy when the trend flips up, sell when it flips down
+  params:
+    period: 10             # ATR lookback (classic default)
+    multiplier: 3.0        # ATR band width; lower = earlier, more frequent flips
+
+risk:
+  position_pct: 0.15       # 15% of equity per position
+  max_open_positions: 3
+  stop_loss_pct: 0.07      # give the trend room; Supertrend exits are themselves a soft stop
+  take_profit_pct: 0.21    # 3:1 reward:risk — let winners run
+  max_drawdown_pct: 0.30
+
+paper:
+  starting_cash: 10000.0
+  quote_currency: USDT
+  fee_rate: 0.001
+  slippage_pct: 0.0005
+
+logging:
+  level: INFO
+  file: logs/crypto-bot.log
