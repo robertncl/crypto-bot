@@ -54,25 +54,47 @@ class RiskManager:
         price: float,
         open_positions: int,
         has_position: bool,
+        position_notional: float = 0.0,
     ) -> RiskDecision:
-        """Decide whether and how large a new long position may be."""
-        if has_position:
-            return RiskDecision(False, reason="already holding this symbol")
-        if open_positions >= self.cfg.max_open_positions:
-            return RiskDecision(
-                False, reason=f"max_open_positions ({self.cfg.max_open_positions}) reached"
-            )
+        """Decide whether and how large a long buy may be.
+
+        By default only *new* positions are allowed: holding the symbol blocks the buy,
+        which keeps signal strategies from re-buying on every poll. When
+        ``allow_averaging_in`` is set (for accumulate/DCA strategies) a held symbol may be
+        topped up, optionally capped at ``max_position_pct`` of equity via
+        ``position_notional`` (the symbol's current mark-to-market value).
+        """
         if price <= 0:
             return RiskDecision(False, reason="invalid price")
 
+        if has_position:
+            if not self.cfg.allow_averaging_in:
+                return RiskDecision(False, reason="already holding this symbol")
+        elif open_positions >= self.cfg.max_open_positions:
+            # The cap governs how many *distinct* symbols can be open; averaging into a
+            # symbol already counted against it is fine.
+            return RiskDecision(
+                False, reason=f"max_open_positions ({self.cfg.max_open_positions}) reached"
+            )
+
         notional = equity * self.cfg.position_pct
+        if has_position and self.cfg.max_position_pct > 0:
+            room = equity * self.cfg.max_position_pct - position_notional
+            if room <= 0:
+                return RiskDecision(
+                    False,
+                    reason=f"position cap ({self.cfg.max_position_pct:.0%} of equity) reached",
+                )
+            notional = min(notional, room)
+
         amount = notional / price
         if amount <= 0:
             return RiskDecision(False, reason="position size rounds to zero")
+        verb = "add" if has_position else "allocate"
         return RiskDecision(
             True,
             amount=amount,
-            reason=f"allocate {self.cfg.position_pct:.0%} of equity ({notional:.2f})",
+            reason=f"{verb} {notional / equity:.0%} of equity ({notional:.2f})",
         )
 
     def protective_exit(self, position: Position, price: float) -> str | None:

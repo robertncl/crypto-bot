@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from crypto_bot.config import (
     BotConfig,
     ExchangeConfig,
@@ -125,6 +127,37 @@ def test_engine_respects_drawdown_kill_switch():
     engine.run_once()
 
     assert not engine.portfolio.has_position("BTC/USDT")
+
+
+def test_engine_dca_averages_in_up_to_the_position_cap():
+    # DCA with averaging-in on: each new candle adds a 10%-of-equity tranche to the same
+    # symbol (weighted-average entry), and the per-symbol cap halts growth at 30% of equity.
+    from crypto_bot.strategies.dca import DCA
+
+    config = _config(
+        position_pct=0.10,
+        allow_averaging_in=True,
+        max_position_pct=0.30,
+        stop_loss_pct=0.0,
+        take_profit_pct=0.0,
+        max_drawdown_pct=0.0,
+    )
+    config.strategy = StrategyConfig(name="dca", params={"every": 1})
+
+    exchange = FakeExchange([10, 10])
+    strategy = DCA(config.strategy.params)
+    portfolio = Portfolio(cash=1000.0, quote_currency="USDT")
+    engine = Engine(config, exchange, strategy, RiskManager(config.risk), portfolio)
+    engine.broker = PaperBroker(engine.last_price, fee_rate=0.0, slippage_pct=0.0)
+
+    for n in range(2, 8):  # a fresh candle each cycle
+        exchange.set_closes([10] * n)
+        engine.run_once()
+
+    pos = portfolio.positions["BTC/USDT"]
+    assert pos.notional(10.0) == pytest.approx(300.0)  # capped at 30% of 1000 equity
+    assert pos.entry_price == pytest.approx(10.0)
+    assert portfolio.cash == pytest.approx(700.0)
 
 
 def test_engine_runs_a_registered_breakout_strategy():

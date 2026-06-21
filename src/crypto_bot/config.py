@@ -37,6 +37,12 @@ class RiskConfig:
     stop_loss_pct: float = 0.05
     take_profit_pct: float = 0.15
     max_drawdown_pct: float = 0.25
+    # Averaging in (for accumulate/DCA strategies). Off by default so signal strategies
+    # keep their one-position-per-symbol behaviour and don't re-buy on every poll.
+    allow_averaging_in: bool = False
+    # When averaging in, cap a single symbol's total notional at this fraction of equity
+    # (0 disables the cap). Stops a scheduled strategy piling unbounded into one symbol.
+    max_position_pct: float = 0.0
 
 
 @dataclass
@@ -154,14 +160,18 @@ def _build_risk(raw: dict) -> RiskConfig:
         stop_loss_pct=float(raw.get("stop_loss_pct", 0.05)),
         take_profit_pct=float(raw.get("take_profit_pct", 0.15)),
         max_drawdown_pct=float(raw.get("max_drawdown_pct", 0.25)),
+        allow_averaging_in=bool(raw.get("allow_averaging_in", False)),
+        max_position_pct=float(raw.get("max_position_pct", 0.0)),
     )
     if not 0 < risk.position_pct <= 1:
         raise ConfigError("risk.position_pct must be in (0, 1]")
     if risk.max_open_positions < 1:
         raise ConfigError("risk.max_open_positions must be >= 1")
-    for name in ("stop_loss_pct", "take_profit_pct", "max_drawdown_pct"):
+    for name in ("stop_loss_pct", "take_profit_pct", "max_drawdown_pct", "max_position_pct"):
         if getattr(risk, name) < 0:
             raise ConfigError(f"risk.{name} must be >= 0")
+    if risk.max_position_pct > 1:
+        raise ConfigError("risk.max_position_pct must be in [0, 1] (0 disables the cap)")
     return risk
 
 

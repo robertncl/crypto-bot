@@ -142,11 +142,16 @@ class Engine:
                 continue  # don't re-enter a symbol we just stopped out of this cycle
             if halted:
                 continue
+            has_position = self.portfolio.has_position(symbol)
+            position_notional = (
+                self.portfolio.positions[symbol].notional(price) if has_position else 0.0
+            )
             decision = self.risk.size_buy(
                 equity=equity,
                 price=price,
                 open_positions=self.portfolio.open_position_count,
-                has_position=self.portfolio.has_position(symbol),
+                has_position=has_position,
+                position_notional=position_notional,
             )
             if not decision.approved:
                 self.log.debug("buy %s skipped: %s", symbol, decision.reason)

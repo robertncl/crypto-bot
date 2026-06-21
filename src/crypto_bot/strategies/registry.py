@@ -9,6 +9,7 @@ from __future__ import annotations
 from crypto_bot.strategies.base import Strategy
 from crypto_bot.strategies.bollinger import BollingerReversion
 from crypto_bot.strategies.breakout import Breakout
+from crypto_bot.strategies.dca import DCA
 from crypto_bot.strategies.ma_crossover import MACrossover
 from crypto_bot.strategies.macd import MACDMomentum
 from crypto_bot.strategies.rsi_reversion import RSIReversion
@@ -45,3 +46,4 @@ register_strategy(Breakout)
 register_strategy(BollingerReversion)
 register_strategy(MACDMomentum)
 register_strategy(Supertrend)
+register_strategy(DCA)

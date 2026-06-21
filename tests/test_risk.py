@@ -1,3 +1,5 @@
+import pytest
+
 from crypto_bot.config import RiskConfig
 from crypto_bot.core.models import Position
 from crypto_bot.risk.manager import RiskManager
@@ -25,6 +27,33 @@ def test_size_buy_allocates_fraction_of_equity():
 def test_size_buy_rejected_when_already_holding():
     decision = _rm().size_buy(equity=1000.0, price=50.0, open_positions=1, has_position=True)
     assert not decision.approved
+
+
+def test_averaging_in_tops_up_a_held_symbol():
+    rm = _rm(allow_averaging_in=True)
+    decision = rm.size_buy(
+        equity=1000.0, price=50.0, open_positions=1, has_position=True, position_notional=100.0
+    )
+    assert decision.approved
+    assert decision.amount == 2.0  # another 10%-of-equity tranche: (1000 * 0.10) / 50
+    assert "add" in decision.reason
+
+
+def test_averaging_in_respects_position_cap():
+    # 25% cap with 240 already held: only 10 of equity of room remains, so the tranche trims.
+    rm = _rm(allow_averaging_in=True, max_position_pct=0.25)
+    decision = rm.size_buy(
+        equity=1000.0, price=50.0, open_positions=1, has_position=True, position_notional=240.0
+    )
+    assert decision.approved
+    assert decision.amount == pytest.approx(0.2)  # trimmed to the 10 of remaining room / 50
+
+    # Once the cap is reached, further buys are blocked outright.
+    capped = rm.size_buy(
+        equity=1000.0, price=50.0, open_positions=1, has_position=True, position_notional=250.0
+    )
+    assert not capped.approved
+    assert "cap" in capped.reason
 
 
 def test_size_buy_rejected_at_max_positions():
