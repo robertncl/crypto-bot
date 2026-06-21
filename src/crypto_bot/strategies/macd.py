@@ -42,7 +42,7 @@ class MACDMomentum(Strategy):
         # defined bars to detect a cross, so slow + signal candles in total.
         return self.slow_period + self.signal_period
 
-    def generate(self, candles: list[Candle]) -> Signal:
+    def generate(self, candles: list[Candle], symbol: str | None = None) -> Signal:
         if len(candles) < self.warmup:
             return HOLD
 

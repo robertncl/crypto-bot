@@ -36,7 +36,7 @@ class Breakout(Strategy):
         # Need `lookback` bars to form the channel, plus the current bar that breaks it.
         return self.lookback + 1
 
-    def generate(self, candles: list[Candle]) -> Signal:
+    def generate(self, candles: list[Candle], symbol: str | None = None) -> Signal:
         if len(candles) < self.warmup:
             return HOLD
 

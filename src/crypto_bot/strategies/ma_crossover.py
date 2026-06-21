@@ -30,7 +30,7 @@ class MACrossover(Strategy):
         # Need two consecutive bars where the slow MA is defined to detect a cross.
         return self.slow_period + 1
 
-    def generate(self, candles: list[Candle]) -> Signal:
+    def generate(self, candles: list[Candle], symbol: str | None = None) -> Signal:
         if len(candles) < self.warmup:
             return HOLD
 

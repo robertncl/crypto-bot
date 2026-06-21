@@ -40,6 +40,12 @@ risk:
   take_profit_pct: 0.15    # close if price rises 15% above entry (0 to disable)
   # Kill-switch: halt all trading if equity drops this far below its peak.
   max_drawdown_pct: 0.25
+  # Averaging in: allow topping up a symbol already held. Leave false for signal
+  # strategies (it stops them re-buying every poll); set true only for accumulate/DCA.
+  allow_averaging_in: false
+  # When averaging in, cap a symbol's total notional at this fraction of equity
+  # (0 disables the cap). Only meaningful with allow_averaging_in: true.
+  max_position_pct: 0.0
 
 # Paper-trading simulation parameters.
 paper:

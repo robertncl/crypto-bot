@@ -42,7 +42,7 @@ class RSIReversion(Strategy):
         # rsi() needs period+1 closes for its first value; we need two in a row to see a cross.
         return self.period + 2
 
-    def generate(self, candles: list[Candle]) -> Signal:
+    def generate(self, candles: list[Candle], symbol: str | None = None) -> Signal:
         if len(candles) < self.warmup:
             return HOLD
 

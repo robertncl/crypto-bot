@@ -41,7 +41,7 @@ class BollingerReversion(Strategy):
         # Bands need `period` closes; we compare two consecutive bars to detect a pierce.
         return self.period + 1
 
-    def generate(self, candles: list[Candle]) -> Signal:
+    def generate(self, candles: list[Candle], symbol: str | None = None) -> Signal:
         if len(candles) < self.warmup:
             return HOLD
 

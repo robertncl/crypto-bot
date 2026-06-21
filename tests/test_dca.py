@@ -30,6 +30,17 @@ def test_every_n_cadence_is_exact(make_candles):
     assert buys == 5  # 10 candles, every 2nd -> 5 buys
 
 
+def test_dedupe_is_per_symbol(make_candles):
+    # The engine shares one strategy instance across symbols: each symbol must buy on a new
+    # candle even though their timestamps are identical, then dedupe independently.
+    dca = DCA({"every": 1})
+    candles = make_candles([10, 10, 10])
+    assert dca.generate(candles, "BTC/USDT").type == SignalType.BUY
+    assert dca.generate(candles, "ETH/USDT").type == SignalType.BUY
+    assert dca.generate(candles, "BTC/USDT").type == SignalType.HOLD
+    assert dca.generate(candles, "ETH/USDT").type == SignalType.HOLD
+
+
 def test_never_sells(make_candles):
     dca = DCA({"every": 1})
     signals = [dca.generate(make_candles([10] * n)) for n in range(2, 8)]

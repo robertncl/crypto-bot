@@ -1,0 +1,50 @@
+# ── DCA / AUTO-INVEST profile (earn-style accumulation) ────────────────────
+# The software analog of a centralized-exchange "Auto-Invest" earn product: buy a
+# small fixed slice on a schedule and HOLD, averaging your entry across the whole
+# period instead of trying to time the market. This is accumulate-and-hold, so the
+# usual flip-style exits are intentionally off (see the notes on each risk knob).
+#
+# Run: crypto-bot run --config config/profiles/dca.yaml
+mode: paper
+
+exchange:
+  name: binance
+  sandbox: false
+  options: {}
+
+# Stick to majors you actually want to accumulate long-term.
+symbols:
+  - BTC/USDT
+  - ETH/USDT
+
+# Daily candle = one scheduled buy per day (with every: 1). Use 1w + every: 1, or
+# 1d + every: 7, for a weekly cadence.
+timeframe: 1d
+poll_seconds: 60
+
+strategy:
+  name: dca                # buy a tranche on schedule, regardless of price
+  params:
+    every: 1               # buy every candle of the timeframe above
+
+risk:
+  position_pct: 0.05       # each scheduled buy is 5% of equity (the DCA tranche)
+  max_open_positions: 2    # = number of symbols; each gets its own stack
+  allow_averaging_in: true # REQUIRED for DCA: lets a held symbol be topped up repeatedly
+  max_position_pct: 0.50   # stop accumulating once a symbol reaches 50% of equity
+  stop_loss_pct: 0.0       # off: DCA holds through dips (selling low defeats the purpose)
+  take_profit_pct: 0.0     # off: accumulate-and-hold, don't cap the upside
+  max_drawdown_pct: 0.0    # off: a long-term accumulator shouldn't halt on drawdown
+  # ^ With stops off, the drawdown kill-switch is your only portfolio-level brake — it is
+  #   disabled here on purpose for buy-and-hold. Re-enable any of these if you want DCA
+  #   with guard rails (e.g. a wide stop_loss_pct and a max_drawdown_pct).
+
+paper:
+  starting_cash: 10000.0
+  quote_currency: USDT
+  fee_rate: 0.001
+  slippage_pct: 0.0005
+
+logging:
+  level: INFO
+  file: logs/crypto-bot.log

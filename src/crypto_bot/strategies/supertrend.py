@@ -44,7 +44,7 @@ class Supertrend(Strategy):
         # evaluated direction bars after the seed to detect a flip without acting on it.
         return self.period + 2
 
-    def generate(self, candles: list[Candle]) -> Signal:
+    def generate(self, candles: list[Candle], symbol: str | None = None) -> Signal:
         if len(candles) < self.warmup:
             return HOLD
 

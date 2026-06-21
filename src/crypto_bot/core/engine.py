@@ -127,7 +127,7 @@ class Engine:
 
         # 4. Strategy-driven entries/exits.
         for symbol, candles in candles_by_symbol.items():
-            signal = self.strategy.generate(candles)
+            signal = self.strategy.generate(candles, symbol)
             if signal.type == SignalType.HOLD:
                 continue
             price = self._last_prices[symbol]

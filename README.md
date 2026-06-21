@@ -17,10 +17,10 @@ before ever touching real money.
 - **Paper trading by default** — simulates fills against *live* market data (with
   configurable fees and slippage). No API keys required.
 - **Live trading** — gated behind an explicit `--yes-i-understand-live` acknowledgement.
-- **Pluggable strategies** — a simple `Strategy` interface plus a registry. Ships with six:
+- **Pluggable strategies** — a simple `Strategy` interface plus a registry. Ships with seven:
   trend/momentum **MA crossover**, **Donchian breakout**, **MACD**, and volatility-adaptive
-  **Supertrend**, plus mean-reverting **RSI** and **Bollinger-band** strategies — spanning
-  conservative to aggressive risk profiles.
+  **Supertrend**; mean-reverting **RSI** and **Bollinger-band**; plus scheduled **DCA /
+  Auto-Invest** accumulation — spanning conservative to aggressive risk profiles.
 - **Risk management** — fractional position sizing, max-open-positions cap, per-position
   stop-loss / take-profit, and a portfolio drawdown kill-switch.
 - **Dependency-light core** — indicators, strategies, risk, and the paper engine are pure
@@ -116,9 +116,9 @@ See [`config/config.example.yaml`](config/config.example.yaml) for the fully-com
 
 ### Strategies
 
-Six strategies ship built-in (list them with `crypto-bot strategies`). They cover both
-families — trend-following (buy strength) and mean-reversion (buy weakness) — across the
-risk spectrum:
+Seven strategies ship built-in (list them with `crypto-bot strategies`). They cover both
+families — trend-following (buy strength) and mean-reversion (buy weakness) — plus a
+scheduled accumulator, across the risk spectrum:
 
 | `name` | Family | Temperament | Key params (defaults) |
 | --- | --- | --- | --- |
@@ -128,15 +128,18 @@ risk spectrum:
 | `breakout` | Trend-following | Aggressive | `lookback` 20 (Donchian channel) |
 | `rsi_reversion` | Mean-reversion | Balanced / contrarian | `period` 14, `oversold` 30, `overbought` 70 |
 | `bollinger` | Mean-reversion | Conservative | `period` 20, `num_std` 2.0 |
+| `dca` | Scheduled accumulation | Earn / buy-and-hold | `every` 1 (buy every N candles) |
 
-All six are **edge-triggered** (a signal fires once, on the bar the condition flips, not on
-every bar after) and long-only. See [docs/STRATEGY_GUIDE.md](docs/STRATEGY_GUIDE.md) for how
-each one thinks and when it wins or loses.
+The first six are **edge-triggered** (a signal fires once, on the bar the condition flips,
+not on every bar after) and long-only; `dca` is **schedule-based** — it buys a tranche every
+`every` candles and accumulates (needs `risk.allow_averaging_in: true`). See
+[docs/STRATEGY_GUIDE.md](docs/STRATEGY_GUIDE.md) for how each one thinks and when it wins or
+loses.
 
 ### Risk profiles
 
 Risk lives in the *combination* of strategy, timeframe, position sizing, and stops — not any
-one knob. Four ready-to-run profiles in [`config/profiles/`](config/profiles/) bundle
+one knob. Five ready-to-run profiles in [`config/profiles/`](config/profiles/) bundle
 sensible combinations so you can compare temperaments without hand-tuning:
 
 | Profile | Strategy | Timeframe | Size / max positions | Stop / take-profit |
@@ -145,6 +148,7 @@ sensible combinations so you can compare temperaments without hand-tuning:
 | [`balanced`](config/profiles/balanced.yaml) | `rsi_reversion` | 4h | 10% / 3 | 6% / 15% |
 | [`trend`](config/profiles/trend.yaml) | `supertrend` | 4h | 15% / 3 | 7% / 21% |
 | [`aggressive`](config/profiles/aggressive.yaml) | `breakout` | 1h | 20% / 5 | 8% / 30% |
+| [`dca`](config/profiles/dca.yaml) | `dca` | 1d | 5% / 2 (averages in) | off (accumulate & hold) |
 
 ```bash
 crypto-bot run --once --config config/profiles/conservative.yaml

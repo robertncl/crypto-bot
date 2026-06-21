@@ -40,14 +40,16 @@ class DCA(Strategy):
         self.every = int(self.params.get("every", 1))
         if self.every <= 0:
             raise ValueError("every must be a positive integer (buy every N candles)")
-        self._last_buy_ts: int | None = None
+        # The engine shares one strategy instance across symbols, so dedupe per symbol:
+        # the timestamp of the candle each symbol last bought on.
+        self._last_buy_ts: dict[str | None, int] = {}
 
     @property
     def warmup(self) -> int:
         # Two candles so the bar interval can be inferred from their timestamps.
         return 2
 
-    def generate(self, candles: list[Candle]) -> Signal:
+    def generate(self, candles: list[Candle], symbol: str | None = None) -> Signal:
         if len(candles) < self.warmup:
             return HOLD
 
@@ -61,9 +63,9 @@ class DCA(Strategy):
         bar_index = latest.timestamp // interval
         if bar_index % self.every != 0:
             return HOLD
-        if self._last_buy_ts == latest.timestamp:
-            return HOLD  # already bought on this candle; don't re-fire across polls
+        if self._last_buy_ts.get(symbol) == latest.timestamp:
+            return HOLD  # already bought this symbol on this candle; don't re-fire across polls
 
-        self._last_buy_ts = latest.timestamp
+        self._last_buy_ts[symbol] = latest.timestamp
         cadence = "every candle" if self.every == 1 else f"every {self.every} candles"
         return Signal(SignalType.BUY, reason=f"DCA scheduled buy ({cadence})")
