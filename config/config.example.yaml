@@ -38,6 +38,10 @@ risk:
   # Protective exits, checked every poll against each position's entry price.
   stop_loss_pct: 0.05      # close if price falls 5% below entry (0 to disable)
   take_profit_pct: 0.15    # close if price rises 15% above entry (0 to disable)
+  # Trailing stop: close if price falls this far below the position's PEAK (0 to
+  # disable). Unlike stop_loss_pct (anchored at entry) it ratchets up with the price,
+  # so a winner that rolls over gives back only this slice of the gain.
+  trailing_stop_pct: 0.0
   # Kill-switch: halt all trading if equity drops this far below its peak.
   max_drawdown_pct: 0.25
   # Averaging in: allow topping up a symbol already held. Leave false for signal

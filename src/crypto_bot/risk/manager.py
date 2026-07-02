@@ -102,6 +102,16 @@ class RiskManager:
         pnl_pct = position.unrealized_pnl_pct(price)
         if self.cfg.stop_loss_pct > 0 and pnl_pct <= -self.cfg.stop_loss_pct:
             return f"stop-loss hit ({pnl_pct:.2%} <= -{self.cfg.stop_loss_pct:.2%})"
+        if self.cfg.trailing_stop_pct > 0:
+            # The peak ratchets up with price (engine/portfolio maintain it); fall back
+            # to entry so a position created before this feature still gets a floor.
+            peak = max(position.peak_price, position.entry_price)
+            if peak > 0 and price <= peak * (1 - self.cfg.trailing_stop_pct):
+                drop = (peak - price) / peak
+                return (
+                    f"trailing-stop hit ({drop:.2%} below peak {peak:.4f} "
+                    f">= {self.cfg.trailing_stop_pct:.2%})"
+                )
         if self.cfg.take_profit_pct > 0 and pnl_pct >= self.cfg.take_profit_pct:
             return f"take-profit hit ({pnl_pct:.2%} >= {self.cfg.take_profit_pct:.2%})"
         return None

@@ -17,14 +17,20 @@ before ever touching real money.
 - **Paper trading by default** — simulates fills against *live* market data (with
   configurable fees and slippage). No API keys required.
 - **Live trading** — gated behind an explicit `--yes-i-understand-live` acknowledgement.
-- **Pluggable strategies** — a simple `Strategy` interface plus a registry. Ships with seven:
+- **Pluggable strategies** — a simple `Strategy` interface plus a registry. Ships with eight:
   trend/momentum **MA crossover**, **Donchian breakout**, **MACD**, and volatility-adaptive
-  **Supertrend**; mean-reverting **RSI** and **Bollinger-band**; plus scheduled **DCA /
-  Auto-Invest** accumulation — spanning conservative to aggressive risk profiles.
+  **Supertrend**; mean-reverting **RSI** and **Bollinger-band**; scheduled **DCA /
+  Auto-Invest** accumulation; and an ADX-driven **regime-switching ensemble** that routes
+  each bar to a trend or mean-reversion specialist.
+- **Backtesting** — `crypto-bot backtest` replays any strategy/config over historical
+  candles **through the exact same engine used live** and reports return vs buy-and-hold,
+  CAGR, Sharpe/Sortino, max drawdown, win rate, and profit factor (fees and slippage
+  included, trade PnL net of fees).
 - **Risk management** — fractional position sizing, max-open-positions cap, per-position
-  stop-loss / take-profit, and a portfolio drawdown kill-switch.
-- **Dependency-light core** — indicators, strategies, risk, and the paper engine are pure
-  Python and unit-tested without any network or heavy dependencies.
+  stop-loss / take-profit, a peak-tracking **trailing stop**, optional averaging-in with a
+  per-symbol cap, and a portfolio drawdown kill-switch.
+- **Dependency-light core** — indicators, strategies, risk, backtester, and the paper engine
+  are pure Python and unit-tested without any network or heavy dependencies.
 
 ## How it works
 
@@ -64,10 +70,13 @@ cp .env.example .env        # then edit .env
 # 4. Sanity-check the config
 crypto-bot validate-config
 
-# 5. Run one paper-trading cycle against live market data
+# 5. Backtest the configured strategy over recent history
+crypto-bot backtest --days 90
+
+# 6. Run one paper-trading cycle against live market data
 crypto-bot run --once
 
-# 6. Run continuously (Ctrl-C to stop)
+# 7. Run continuously (Ctrl-C to stop)
 crypto-bot run
 ```
 
@@ -78,6 +87,7 @@ You can also run it as a module: `python -m crypto_bot run --once`.
 | Command | Description |
 | --- | --- |
 | `crypto-bot run [--once] [--mode paper\|live] [--config PATH]` | Run the trading loop. `--once` does a single cycle. |
+| `crypto-bot backtest [--days N] [--config PATH]` | Replay the configured strategy over the last N days of history and print performance metrics. |
 | `crypto-bot validate-config [--config PATH]` | Load and validate the config file. |
 | `crypto-bot balance [--config PATH]` | Show paper starting cash, or live exchange balances. |
 | `crypto-bot strategies` | List registered strategies. |
@@ -116,9 +126,9 @@ See [`config/config.example.yaml`](config/config.example.yaml) for the fully-com
 
 ### Strategies
 
-Seven strategies ship built-in (list them with `crypto-bot strategies`). They cover both
+Eight strategies ship built-in (list them with `crypto-bot strategies`). They cover both
 families — trend-following (buy strength) and mean-reversion (buy weakness) — plus a
-scheduled accumulator, across the risk spectrum:
+scheduled accumulator and a regime-switching ensemble that combines the two families:
 
 | `name` | Family | Temperament | Key params (defaults) |
 | --- | --- | --- | --- |
@@ -129,26 +139,36 @@ scheduled accumulator, across the risk spectrum:
 | `rsi_reversion` | Mean-reversion | Balanced / contrarian | `period` 14, `oversold` 30, `overbought` 70 |
 | `bollinger` | Mean-reversion | Conservative | `period` 20, `num_std` 2.0 |
 | `dca` | Scheduled accumulation | Earn / buy-and-hold | `every` 1 (buy every N candles) |
+| `regime` | Ensemble (ADX-routed) | Adaptive | `adx_period` 14, `adx_threshold` 25, `trend`/`range` legs |
 
 The first six are **edge-triggered** (a signal fires once, on the bar the condition flips,
 not on every bar after) and long-only; `dca` is **schedule-based** — it buys a tranche every
-`every` candles and accumulates (needs `risk.allow_averaging_in: true`). See
-[docs/STRATEGY_GUIDE.md](docs/STRATEGY_GUIDE.md) for how each one thinks and when it wins or
-loses.
+`every` candles and accumulates (needs `risk.allow_averaging_in: true`); `regime` measures
+trend strength with **ADX** each bar and delegates to a trend-following leg in trending
+markets and a mean-reversion leg in ranging ones (both legs are ordinary registered
+strategies, configured by name). See [docs/STRATEGY_GUIDE.md](docs/STRATEGY_GUIDE.md) for how
+each one thinks and when it wins or loses.
 
 ### Risk profiles
 
 Risk lives in the *combination* of strategy, timeframe, position sizing, and stops — not any
-one knob. Five ready-to-run profiles in [`config/profiles/`](config/profiles/) bundle
+one knob. Six ready-to-run profiles in [`config/profiles/`](config/profiles/) bundle
 sensible combinations so you can compare temperaments without hand-tuning:
 
-| Profile | Strategy | Timeframe | Size / max positions | Stop / take-profit |
+| Profile | Strategy | Timeframe | Size / max positions | Protective exits |
 | --- | --- | --- | --- | --- |
-| [`conservative`](config/profiles/conservative.yaml) | `bollinger` | 1d | 5% / 2 | 5% / 12% |
-| [`balanced`](config/profiles/balanced.yaml) | `rsi_reversion` | 4h | 10% / 3 | 6% / 15% |
-| [`trend`](config/profiles/trend.yaml) | `supertrend` | 4h | 15% / 3 | 7% / 21% |
-| [`aggressive`](config/profiles/aggressive.yaml) | `breakout` | 1h | 20% / 5 | 8% / 30% |
+| [`conservative`](config/profiles/conservative.yaml) | `bollinger` | 1d | 5% / 2 | 5% stop / 12% take-profit |
+| [`balanced`](config/profiles/balanced.yaml) | `rsi_reversion` | 4h | 10% / 3 | 6% stop / 15% take-profit |
+| [`trend`](config/profiles/trend.yaml) | `supertrend` | 4h | 15% / 3 | 7% stop / 21% take-profit |
+| [`adaptive`](config/profiles/adaptive.yaml) | `regime` (supertrend ⇄ rsi) | 4h | 10% / 3 | 6% stop / 5% trailing stop |
+| [`aggressive`](config/profiles/aggressive.yaml) | `breakout` | 1h | 20% / 5 | 8% stop / 30% take-profit |
 | [`dca`](config/profiles/dca.yaml) | `dca` | 1d | 5% / 2 (averages in) | off (accumulate & hold) |
+
+Backtest any of them before running it:
+
+```bash
+crypto-bot backtest --config config/profiles/adaptive.yaml --days 180
+```
 
 ```bash
 crypto-bot run --once --config config/profiles/conservative.yaml
@@ -244,21 +264,24 @@ in-memory fake exchange, so the suite is fast and offline.
 src/crypto_bot/
   cli.py            # command-line interface
   config.py         # YAML + env config loading & validation
-  indicators/       # pure-Python SMA / EMA / RSI / stddev / Bollinger / Donchian / MACD / ATR / Supertrend
-  strategies/       # Strategy interface, registry, 7 built-in strategies
-  risk/             # position sizing, stops, averaging-in, drawdown kill-switch
+  indicators/       # pure-Python SMA / EMA / RSI / stddev / Bollinger / Donchian / MACD / ATR / Supertrend / ADX
+  strategies/       # Strategy interface, registry, 8 built-in strategies
+  risk/             # position sizing, stops (incl. trailing), averaging-in, drawdown kill-switch
+  backtest/         # replay engine + performance metrics (Sharpe, drawdown, trade stats)
   exchanges/        # ExchangeAdapter interface + ccxt implementation
   core/             # models, portfolio, brokers (paper/live), engine
-config/profiles/    # ready-to-run conservative / balanced / trend / aggressive / dca configs
+config/profiles/    # ready-to-run conservative / balanced / trend / adaptive / aggressive / dca configs
 tests/              # offline unit + engine tests
 docs/STRATEGY_GUIDE.md   # beginner-friendly trading-strategy primer
 ```
 
 ## Roadmap
 
-- Backtesting engine over historical OHLCV (the paper broker + engine are close already).
-- More strategies (grid trading; fixed-quote DCA). DCA/Auto-Invest, MACD, Supertrend, RSI
-  mean-reversion, Donchian breakout, and Bollinger bands are done.
+- More strategies (grid trading; fixed-quote DCA). The regime ensemble, DCA/Auto-Invest,
+  MACD, Supertrend, RSI mean-reversion, Donchian breakout, and Bollinger bands are done —
+  as is the backtesting engine (`crypto-bot backtest`).
+- Walk-forward / out-of-sample splits and parameter sweeps on top of the backtester.
+- Intrabar stop resolution in backtests (stops currently evaluate on bar closes).
 - `Decimal` money math respecting per-market precision.
 - Live position reconciliation from exchange state; partial-fill handling.
 - Persistence (SQLite) for trade history and crash recovery; notifications.

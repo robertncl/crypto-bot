@@ -77,9 +77,11 @@ class CCXTAdapter(ExchangeAdapter):
         except ccxt.BaseError as exc:
             raise ExchangeError(f"failed to load markets on {self.name}: {exc}") from exc
 
-    def fetch_candles(self, symbol: str, timeframe: str, limit: int = 200) -> list[Candle]:
+    def fetch_candles(
+        self, symbol: str, timeframe: str, limit: int = 200, since: int | None = None
+    ) -> list[Candle]:
         try:
-            rows = self.client.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+            rows = self.client.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit, since=since)
         except ccxt.BaseError as exc:
             raise ExchangeError(f"fetch_ohlcv failed for {symbol} on {self.name}: {exc}") from exc
         return [Candle.from_ccxt(row) for row in rows]

@@ -36,6 +36,10 @@ class RiskConfig:
     max_open_positions: int = 3
     stop_loss_pct: float = 0.05
     take_profit_pct: float = 0.15
+    # Trailing stop: exit if price falls this far below the position's peak (0 = off).
+    # Unlike the fixed stop-loss (anchored to entry), this ratchets up with the price,
+    # locking in profit while a trend runs.
+    trailing_stop_pct: float = 0.0
     max_drawdown_pct: float = 0.25
     # Averaging in (for accumulate/DCA strategies). Off by default so signal strategies
     # keep their one-position-per-symbol behaviour and don't re-buy on every poll.
@@ -159,6 +163,7 @@ def _build_risk(raw: dict) -> RiskConfig:
         max_open_positions=int(raw.get("max_open_positions", 3)),
         stop_loss_pct=float(raw.get("stop_loss_pct", 0.05)),
         take_profit_pct=float(raw.get("take_profit_pct", 0.15)),
+        trailing_stop_pct=float(raw.get("trailing_stop_pct", 0.0)),
         max_drawdown_pct=float(raw.get("max_drawdown_pct", 0.25)),
         allow_averaging_in=bool(raw.get("allow_averaging_in", False)),
         max_position_pct=float(raw.get("max_position_pct", 0.0)),
@@ -167,7 +172,13 @@ def _build_risk(raw: dict) -> RiskConfig:
         raise ConfigError("risk.position_pct must be in (0, 1]")
     if risk.max_open_positions < 1:
         raise ConfigError("risk.max_open_positions must be >= 1")
-    for name in ("stop_loss_pct", "take_profit_pct", "max_drawdown_pct", "max_position_pct"):
+    for name in (
+        "stop_loss_pct",
+        "take_profit_pct",
+        "trailing_stop_pct",
+        "max_drawdown_pct",
+        "max_position_pct",
+    ):
         if getattr(risk, name) < 0:
             raise ConfigError(f"risk.{name} must be >= 0")
     if risk.max_position_pct > 1:

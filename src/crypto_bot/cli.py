@@ -3,6 +3,7 @@
 Commands::
 
     crypto-bot run [--config PATH] [--mode paper|live] [--once] [--yes-i-understand-live]
+    crypto-bot backtest [--config PATH] [--days N]
     crypto-bot validate-config [--config PATH]
     crypto-bot balance [--config PATH]
     crypto-bot strategies
@@ -10,6 +11,8 @@ Commands::
 
 Paper mode is the default and needs no API keys. Live mode is gated behind an explicit
 ``--yes-i-understand-live`` flag so real orders are never placed by accident.
+``backtest`` replays the configured strategy over historical candles and prints
+performance metrics (return vs buy-and-hold, Sharpe/Sortino, drawdown, trade stats).
 """
 
 from __future__ import annotations
@@ -64,6 +67,13 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     run_p.set_defaults(func=_cmd_run)
 
+    bt_p = sub.add_parser("backtest", help="replay the strategy over historical candles")
+    bt_p.add_argument("--config", default=DEFAULT_CONFIG, help="path to config YAML")
+    bt_p.add_argument(
+        "--days", type=float, default=90.0, help="how much history to test (default 90)"
+    )
+    bt_p.set_defaults(func=_cmd_backtest)
+
     val_p = sub.add_parser("validate-config", help="load and validate the config file")
     val_p.add_argument("--config", default=DEFAULT_CONFIG)
     val_p.set_defaults(func=_cmd_validate)
@@ -108,6 +118,41 @@ def _cmd_run(args: argparse.Namespace) -> int:
             engine.run()
     finally:
         engine.exchange.close()
+    return 0
+
+
+def _cmd_backtest(args: argparse.Namespace) -> int:
+    import time
+
+    config = load_config(args.config)
+    config.mode = "paper"  # a backtest must never touch live order endpoints
+    setup_logging(config.logging.level, config.logging.file)
+
+    if args.days <= 0:
+        print("--days must be positive", file=sys.stderr)
+        return 2
+
+    # Imported here so `validate-config`/`strategies` work without ccxt installed.
+    from crypto_bot.backtest import Backtester, fetch_history
+    from crypto_bot.exchanges.factory import build_exchange
+
+    exchange = build_exchange(config.exchange, require_credentials=False)
+    since_ms = int((time.time() - args.days * 86_400) * 1000)
+    candles_by_symbol = {}
+    try:
+        for symbol in config.symbols:
+            candles = fetch_history(exchange, symbol, config.timeframe, since_ms)
+            if not candles:
+                print(f"no history returned for {symbol}; aborting", file=sys.stderr)
+                return 1
+            print(f"fetched {len(candles)} {config.timeframe} candles for {symbol}")
+            candles_by_symbol[symbol] = candles
+    finally:
+        exchange.close()
+
+    result = Backtester(config).run(candles_by_symbol)
+    print()
+    print(result.format_report())
     return 0
 
 

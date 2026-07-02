@@ -74,7 +74,7 @@ time — it's to **win more on winners than you lose on losers, over many trades
 
 ## 4. The first strategy to learn: Moving-Average (MA) Crossover
 
-The bot ships with seven strategies (see §6), but start here: this is the classic beginner
+The bot ships with eight strategies (see §6), but start here: this is the classic beginner
 **trend-following** strategy, and a great one to learn on because you can see it on a chart.
 
 **A moving average (MA)** is just the average price over the last *N* candles, recalculated
@@ -148,6 +148,15 @@ most important risk tool there is.
 ```yaml
   take_profit_pct: 0.15     # auto-sell if a position rises 15% above entry
 ```
+
+**Trailing stop — let winners run, but keep what they earned.** A fixed take-profit caps
+your upside; a fixed stop-loss (anchored at entry) protects none of an open gain. The
+trailing stop follows the price up: it sells when price falls a set percentage below the
+*highest* price the position has seen. If a coin doubles and then rolls over, you give
+back only the trailing slice instead of round-tripping the whole move.
+```yaml
+  trailing_stop_pct: 0.05   # auto-sell if price drops 5% from the position's peak
+```
 Notice `take_profit (15%)` is larger than `stop_loss (5%)` here — a 3:1 *reward-to-risk* ratio.
 That means you can be wrong twice for every time you're right and still come out ahead. Aiming
 for reward ≥ risk is a core discipline.
@@ -168,9 +177,9 @@ move together, so don't assume 5 coins = 5x safer.
 
 ## 6. The other strategies this bot ships — and choosing a risk profile
 
-You don't have to stop at MA crossover. The bot ships **seven** strategies (run
-`crypto-bot strategies` to list them) — four trend/momentum, two mean-reversion, and one
-scheduled accumulator:
+You don't have to stop at MA crossover. The bot ships **eight** strategies (run
+`crypto-bot strategies` to list them) — four trend/momentum, two mean-reversion, one
+scheduled accumulator, and one ensemble that combines the families:
 
 **Trend-following / momentum (buy strength):**
 - **MA crossover** (`ma_crossover`) — the worked example in §4. *Balanced.*
@@ -189,7 +198,7 @@ scheduled accumulator:
 - **Breakout** (`breakout`) — buys when price punches *above* its highest high of the last N
   candles (a "Donchian channel"), betting a fresh move has begun; sells on a new N-bar low. It
   rides big trends hard but gets chopped up in sideways markets, which makes it the most
-  *aggressive* of the six — give it a wide stop and a generous take-profit.
+  *aggressive* of the signal strategies — give it a wide stop and a generous take-profit.
 
 **Mean-reversion (buy weakness):**
 - **RSI reversion** (`rsi_reversion`) — RSI is a 0–100 "overbought/oversold" gauge. This buys
@@ -200,7 +209,7 @@ scheduled accumulator:
   market is volatile and tightens when it's calm. It buys when price is stretched *below* the
   lower band and sells when stretched *above* the upper one. Because it demands a genuine
   statistical stretch (2 standard deviations by default) before acting, it trades rarely on calm
-  majors — the most *conservative* of the six.
+  majors — the most *conservative* of the signal strategies.
 
 **Scheduled accumulation (buy on a clock, ignore price):**
 - **DCA / Auto-Invest** (`dca`) — the odd one out: it doesn't react to price at all. It buys a
@@ -212,22 +221,35 @@ scheduled accumulator:
   [`dca.yaml`](../config/profiles/dca.yaml) profile turns the stop-loss and take-profit *off* —
   selling low would defeat the purpose. *Earn / buy-and-hold.*
 
+**Regime-switching ensemble (route to the right specialist):**
+- **Regime** (`regime`) — remember §3's core lesson: trend-followers lose in chop,
+  mean-reverters lose in trends, and *no one strategy wins everywhere*. This meta-strategy
+  measures how strongly the market is trending each bar using **ADX** (a 0–100 trend-strength
+  gauge, direction-agnostic; above ~25 is conventionally "trending"). When the market is
+  trending it hands the decision to a trend-following leg (Supertrend by default); when it's
+  ranging, to a mean-reversion leg (RSI reversion by default). Both legs are ordinary
+  strategies configured by name, so any pairing works. One caveat: the regime can flip while
+  a position is open, so the leg that bought may not be the leg that sells — run it with
+  protective stops on (the [`adaptive.yaml`](../config/profiles/adaptive.yaml) profile pairs
+  it with a trailing stop). *Adaptive.*
+
 ### Your "risk profile" is the whole recipe, not one setting
 
 Conservative vs. aggressive isn't a single dial — it's the *combination* of which strategy, on
 what timeframe, with how much size and how tight a stop. A slow Bollinger strategy on the daily
 chart risking 5% per trade is cautious; a 1-hour breakout risking 20% is not. The bot bundles
-five ready-made recipes in [`config/profiles/`](../config/profiles/):
+six ready-made recipes in [`config/profiles/`](../config/profiles/):
 
-| Profile | Strategy | Timeframe | Position size | Max positions | Stop / take-profit |
+| Profile | Strategy | Timeframe | Position size | Max positions | Protective exits |
 | --- | --- | --- | --- | --- | --- |
-| `conservative.yaml` | Bollinger | 1d | 5% | 2 | 5% / 12% |
-| `balanced.yaml` | RSI reversion | 4h | 10% | 3 | 6% / 15% |
-| `trend.yaml` | Supertrend | 4h | 15% | 3 | 7% / 21% |
-| `aggressive.yaml` | Breakout | 1h | 20% | 5 | 8% / 30% |
+| `conservative.yaml` | Bollinger | 1d | 5% | 2 | 5% stop / 12% take-profit |
+| `balanced.yaml` | RSI reversion | 4h | 10% | 3 | 6% stop / 15% take-profit |
+| `trend.yaml` | Supertrend | 4h | 15% | 3 | 7% stop / 21% take-profit |
+| `adaptive.yaml` | Regime ensemble | 4h | 10% | 3 | 6% stop / 5% trailing stop |
+| `aggressive.yaml` | Breakout | 1h | 20% | 5 | 8% stop / 30% take-profit |
 | `dca.yaml` | DCA / Auto-Invest | 1d | 5% (averages in) | 2 | off (accumulate & hold) |
 
-Run one straight away — all five are **paper** mode, so nothing is at risk:
+Run one straight away — all six are **paper** mode, so nothing is at risk:
 
 ```bash
 crypto-bot run --once --config config/profiles/conservative.yaml
@@ -252,8 +274,15 @@ means bigger swings in both directions.
 ## 7. Backtest and paper-trade — *always*, before real money
 
 1. **Backtest** — replay the strategy over historical candles to see how it *would* have done.
-   Cheap and fast, but beware **overfitting**: if you tweak parameters until they look perfect
-   on past data, they usually fail on new data. Past performance ≠ future results.
+   The bot has this built in:
+   ```bash
+   crypto-bot backtest --config config/profiles/adaptive.yaml --days 180
+   ```
+   It replays your exact config through the same engine used live and reports total return
+   vs simply buying and holding, Sharpe/Sortino (risk-adjusted return), max drawdown, win
+   rate, and profit factor — with fees and slippage included. Cheap and fast, but beware
+   **overfitting**: if you tweak parameters until they look perfect on past data, they
+   usually fail on new data. Past performance ≠ future results.
 2. **Paper trade** — run on *live* market data with fake money (this bot's default `paper`
    mode). This catches problems backtests miss: fees, slippage, latency, and your own behavior.
 3. **Testnet** — many exchanges offer a sandbox with fake funds but the *real* order system
@@ -323,6 +352,9 @@ setting actually does.
 | **Long / Short** | Betting price goes up (long) / down (short). This bot is long-only. |
 | **Position** | An open holding in a symbol. |
 | **Stop-loss / Take-profit** | Auto-exit on a set loss / gain. |
+| **Trailing stop** | Auto-exit when price falls a set % below the position's *peak* (follows price up). |
+| **ADX** | 0–100 trend-*strength* gauge (direction-agnostic); ~25+ means trending. |
+| **Sharpe / Sortino** | Return per unit of risk (volatility / downside volatility); higher is better. |
 | **Drawdown** | % drop from your account's peak value. |
 | **Equity** | Total account value = cash + current value of open positions. |
 | **Backtest / Paper trade** | Test on past data / on live data with fake money. |

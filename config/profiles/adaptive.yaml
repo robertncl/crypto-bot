@@ -1,0 +1,55 @@
+# ── ADAPTIVE profile (regime-switching ensemble) ───────────────────────────
+# The most sophisticated recipe in the box. Instead of betting on one style of
+# market, an ADX regime filter measures trend *strength* every bar and routes the
+# decision to a specialist: Supertrend rides trending markets, RSI reversion works
+# the ranges. A trailing stop ratchets up under winners so a trend that rolls over
+# gives back a bounded slice of the gain rather than the whole ride.
+#
+# Backtest it first, then paper-trade it:
+#   crypto-bot backtest --config config/profiles/adaptive.yaml --days 180
+#   crypto-bot run --config config/profiles/adaptive.yaml
+mode: paper
+
+exchange:
+  name: binance
+  sandbox: false
+  options: {}
+
+symbols:
+  - BTC/USDT
+  - ETH/USDT
+  - SOL/USDT
+
+# Medium timeframe: enough bars for the ADX to read the regime without whipsaw.
+timeframe: 4h
+poll_seconds: 60
+
+strategy:
+  name: regime
+  params:
+    adx_period: 14           # ADX lookback
+    adx_threshold: 25        # >= 25 -> trending regime; below -> ranging (classic bands)
+    trend:                   # the leg used while trending
+      name: supertrend
+      params: { period: 10, multiplier: 3.0 }
+    range:                   # the leg used while ranging
+      name: rsi_reversion
+      params: { period: 14, oversold: 30, overbought: 70 }
+
+risk:
+  position_pct: 0.10         # 10% of equity per position
+  max_open_positions: 3
+  stop_loss_pct: 0.06        # hard floor below entry (disaster stop)
+  trailing_stop_pct: 0.05    # ratchets under the peak — the primary profit-protecting exit
+  take_profit_pct: 0.0       # off: let the trailing stop decide when a run is over
+  max_drawdown_pct: 0.30
+
+paper:
+  starting_cash: 10000.0
+  quote_currency: USDT
+  fee_rate: 0.001
+  slippage_pct: 0.0005
+
+logging:
+  level: INFO
+  file: logs/crypto-bot.log

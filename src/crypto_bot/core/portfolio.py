@@ -76,12 +76,15 @@ class Portfolio:
     def _add_to_position(self, symbol: str, amount: float, price: float) -> None:
         pos = self.positions.get(symbol)
         if pos is None:
-            self.positions[symbol] = Position(symbol=symbol, amount=amount, entry_price=price)
+            self.positions[symbol] = Position(
+                symbol=symbol, amount=amount, entry_price=price, peak_price=price
+            )
             return
         # Weighted-average entry price when adding to an existing position.
         new_amount = pos.amount + amount
         pos.entry_price = (pos.entry_price * pos.amount + price * amount) / new_amount
         pos.amount = new_amount
+        pos.peak_price = max(pos.peak_price, price)
 
     def snapshot(self, prices: dict[str, float]) -> dict:
         """A serializable summary for logging / status output."""

@@ -78,6 +78,27 @@ def test_no_exit_within_band():
     assert _rm().protective_exit(pos, 100.0) is None
 
 
+def test_trailing_stop_triggers_below_peak():
+    rm = _rm(stop_loss_pct=0.0, take_profit_pct=0.0, trailing_stop_pct=0.05)
+    pos = Position("BTC/USDT", amount=1.0, entry_price=100.0, peak_price=140.0)
+    # 6% below the 140 peak — still 31% above entry, so only the trail catches it.
+    assert "trailing-stop" in rm.protective_exit(pos, 131.0)
+    # 4% below the peak: inside the trail, no exit.
+    assert rm.protective_exit(pos, 135.0) is None
+
+
+def test_trailing_stop_falls_back_to_entry_when_peak_unset():
+    rm = _rm(stop_loss_pct=0.0, take_profit_pct=0.0, trailing_stop_pct=0.05)
+    pos = Position("BTC/USDT", amount=1.0, entry_price=100.0)  # peak_price defaults to 0
+    assert "trailing-stop" in rm.protective_exit(pos, 94.0)
+
+
+def test_trailing_stop_disabled_at_zero():
+    rm = _rm(stop_loss_pct=0.0, take_profit_pct=0.0, trailing_stop_pct=0.0)
+    pos = Position("BTC/USDT", amount=1.0, entry_price=100.0, peak_price=200.0)
+    assert rm.protective_exit(pos, 101.0) is None
+
+
 def test_drawdown_kill_switch():
     rm = _rm()
     rm.update_equity(1000.0)

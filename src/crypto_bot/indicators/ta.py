@@ -299,6 +299,68 @@ def supertrend(
     return line, direction
 
 
+def adx(
+    highs: list[Number], lows: list[Number], closes: list[Number], period: int = 14
+) -> list[Number | None]:
+    """Average Directional Index (Wilder): 0–100 *trend strength*, direction-agnostic.
+
+    Built from directional movement: bars where the high pushes up more than the low
+    pushes down count as +DM, the reverse as −DM. Both are Wilder-smoothed against the
+    true range into +DI/−DI, their normalized gap is DX, and ADX is the Wilder average
+    of DX. Readings above ~25 are conventionally "trending"; below ~20, "ranging".
+
+    First defined at index ``2 * period - 1`` (one Wilder window to seed the DI lines,
+    a second to seed the DX average); earlier entries are ``None``.
+    """
+    n = len(closes)
+    if not (len(highs) == len(lows) == n):
+        raise ValueError("highs, lows and closes must be the same length")
+    if period <= 0:
+        raise ValueError("period must be a positive integer")
+    out: list[Number | None] = [None] * n
+    if n < 2 * period:
+        return out
+
+    tr = true_range(highs, lows, closes)
+    plus_dm = [0.0] * n
+    minus_dm = [0.0] * n
+    for i in range(1, n):
+        up = highs[i] - highs[i - 1]
+        down = lows[i - 1] - lows[i]
+        if up > down and up > 0:
+            plus_dm[i] = up
+        elif down > up and down > 0:
+            minus_dm[i] = down
+
+    def _dx(spd: float, smd: float, str_: float) -> float:
+        if str_ == 0:
+            return 0.0
+        plus_di = 100.0 * spd / str_
+        minus_di = 100.0 * smd / str_
+        total = plus_di + minus_di
+        return 0.0 if total == 0 else 100.0 * abs(plus_di - minus_di) / total
+
+    # Wilder smoothing, seeded with plain sums over the first `period` movement bars.
+    smooth_tr = sum(tr[i] for i in range(1, period + 1))
+    smooth_pdm = sum(plus_dm[1 : period + 1])
+    smooth_mdm = sum(minus_dm[1 : period + 1])
+    dx = [0.0] * n
+    dx[period] = _dx(smooth_pdm, smooth_mdm, smooth_tr)
+    for i in range(period + 1, n):
+        smooth_tr += tr[i] - smooth_tr / period
+        smooth_pdm += plus_dm[i] - smooth_pdm / period
+        smooth_mdm += minus_dm[i] - smooth_mdm / period
+        dx[i] = _dx(smooth_pdm, smooth_mdm, smooth_tr)
+
+    seed = sum(dx[period : 2 * period]) / period
+    out[2 * period - 1] = seed
+    prev = seed
+    for i in range(2 * period, n):
+        prev = (prev * (period - 1) + dx[i]) / period
+        out[i] = prev
+    return out
+
+
 def highest(values: list[Number], period: int) -> list[Number | None]:
     """Rolling maximum over a trailing window of ``period`` values (Donchian upper)."""
     return _rolling_extreme(values, period, max)

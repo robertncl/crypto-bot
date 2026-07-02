@@ -1,6 +1,7 @@
 import pytest
 
 from crypto_bot.indicators.ta import (
+    adx,
     atr,
     bollinger_bands,
     ema,
@@ -158,3 +159,33 @@ def test_supertrend_validates_inputs():
         supertrend([1, 2], [1, 2], [1, 2], period=0)
     with pytest.raises(ValueError):
         supertrend([1, 2], [1, 2], [1, 2], multiplier=0)
+
+
+def test_adx_is_100_in_a_pure_trend():
+    # Monotonic ramp: every bar's movement is +DM, none is -DM -> DX = ADX = 100.
+    ramp = [float(i) for i in range(1, 20)]
+    out = adx(ramp, ramp, ramp, period=3)
+    assert out[:5] == [None] * 5  # first defined at 2*period - 1
+    assert all(v == pytest.approx(100.0) for v in out[5:])
+
+
+def test_adx_is_0_when_flat():
+    flat = [10.0] * 12
+    out = adx(flat, flat, flat, period=3)
+    assert out[5:] == [0.0] * 7
+
+
+def test_adx_low_in_chop_high_in_trend():
+    # A zigzag balances +DM and -DM (weak trend); a ramp maxes ADX out.
+    zig = [10.0, 12.0] * 8
+    ramp = [float(i) for i in range(1, 17)]
+    zig_adx = adx(zig, zig, zig, period=3)[-1]
+    ramp_adx = adx(ramp, ramp, ramp, period=3)[-1]
+    assert zig_adx < 25 < ramp_adx
+
+
+def test_adx_validates_inputs():
+    with pytest.raises(ValueError):
+        adx([1, 2], [1, 2], [1, 2], period=0)
+    with pytest.raises(ValueError):
+        adx([1, 2, 3], [1, 2], [1, 2, 3], period=2)  # mismatched lengths

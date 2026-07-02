@@ -26,8 +26,15 @@ class ExchangeAdapter(ABC):
         """Load and cache market metadata; call once at startup to validate symbols."""
 
     @abstractmethod
-    def fetch_candles(self, symbol: str, timeframe: str, limit: int = 200) -> list[Candle]:
-        """Return up to ``limit`` recent OHLCV candles, oldest-first."""
+    def fetch_candles(
+        self, symbol: str, timeframe: str, limit: int = 200, since: int | None = None
+    ) -> list[Candle]:
+        """Return up to ``limit`` OHLCV candles, oldest-first.
+
+        Without ``since`` this returns the most *recent* candles (the live loop's use).
+        With ``since`` (epoch ms) it returns candles starting at that time — the
+        backtester paginates history with it.
+        """
 
     @abstractmethod
     def fetch_last_price(self, symbol: str) -> float:

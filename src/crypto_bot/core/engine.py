@@ -120,6 +120,7 @@ class Engine:
                 continue
             price = self._last_prices[symbol]
             position = self.portfolio.positions[symbol]
+            position.peak_price = max(position.peak_price, price)
             reason = self.risk.protective_exit(position, price)
             if reason:
                 self._close_position(symbol, reason)

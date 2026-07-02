@@ -107,6 +107,7 @@ class Position:
     symbol: str
     amount: float          # base currency held
     entry_price: float     # average entry price in quote currency
+    peak_price: float = 0.0  # highest price seen while open (drives the trailing stop)
 
     def notional(self, price: float) -> float:
         return self.amount * price

@@ -117,6 +117,25 @@ def test_engine_protective_stop_loss_closes_position():
     assert engine.portfolio.realized_pnl < 0
 
 
+def test_engine_trailing_stop_locks_in_profit():
+    exchange = FakeExchange([10, 9, 8, 7, 6, 5, 7, 10])  # BUY at 10
+    config = _config(trailing_stop_pct=0.05)
+    engine = _engine(exchange, config)
+    engine.run_once()
+    assert engine.portfolio.has_position("BTC/USDT")
+
+    # Price runs to 20 (engine ratchets the peak), then pulls back 10% — the trailing
+    # stop flattens the position well above the 10.0 entry.
+    exchange.set_closes([10, 10, 10, 10, 10, 10, 10, 20])
+    engine.run_once()
+    assert engine.portfolio.positions["BTC/USDT"].peak_price == 20.0
+
+    exchange.set_closes([10, 10, 10, 10, 10, 10, 20, 18])
+    engine.run_once()
+    assert not engine.portfolio.has_position("BTC/USDT")
+    assert engine.portfolio.realized_pnl > 0  # sold at 18 vs entry 10
+
+
 def test_engine_respects_drawdown_kill_switch():
     exchange = FakeExchange([10, 9, 8, 7, 6, 5, 7, 10])
     # Kill-switch trips immediately; no position should be opened.
