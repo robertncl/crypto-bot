@@ -70,13 +70,27 @@ def rsi(values: list[Number], period: int = 14) -> list[Number | None]:
     avg_loss = losses / period
     out[period] = _rsi_from_averages(avg_gain, avg_loss)
 
+    # Hot loop: hoist the constant divisor and inline _rsi_from_averages to avoid a
+    # function call per bar. Result is identical to the helper.
+    prev_weight = period - 1
+    prev = values[period]
     for i in range(period + 1, len(values)):
-        change = values[i] - values[i - 1]
-        gain = change if change > 0 else 0.0
-        loss = -change if change < 0 else 0.0
-        avg_gain = (avg_gain * (period - 1) + gain) / period
-        avg_loss = (avg_loss * (period - 1) + loss) / period
-        out[i] = _rsi_from_averages(avg_gain, avg_loss)
+        cur = values[i]
+        change = cur - prev
+        prev = cur
+        if change > 0:
+            avg_gain = (avg_gain * prev_weight + change) / period
+            avg_loss = (avg_loss * prev_weight) / period
+        elif change < 0:
+            avg_gain = (avg_gain * prev_weight) / period
+            avg_loss = (avg_loss * prev_weight - change) / period
+        else:
+            avg_gain = (avg_gain * prev_weight) / period
+            avg_loss = (avg_loss * prev_weight) / period
+        if avg_loss == 0:
+            out[i] = 100.0
+        else:
+            out[i] = 100.0 - (100.0 / (1.0 + avg_gain / avg_loss))
     return out
 
 
@@ -197,17 +211,29 @@ def true_range(
     n = len(closes)
     if not (len(highs) == len(lows) == n):
         raise ValueError("highs, lows and closes must be the same length")
-    out: list[Number | None] = [None] * n
-    for i in range(n):
-        if i == 0:
-            out[i] = highs[i] - lows[i]
-        else:
-            prev_close = closes[i - 1]
-            out[i] = max(
-                highs[i] - lows[i],
-                abs(highs[i] - prev_close),
-                abs(lows[i] - prev_close),
-            )
+    if n == 0:
+        return []
+    # Inline abs()/max() as comparisons and carry prev_close forward: this is a per-bar
+    # hot loop in every ATR/ADX/Supertrend evaluation, and the builtin-call overhead
+    # dominated it. Values are identical to max(h-l, |h-pc|, |l-pc|).
+    out: list[Number | None] = [highs[0] - lows[0]]
+    prev_close = closes[0]
+    for i in range(1, n):
+        high = highs[i]
+        low = lows[i]
+        tr = high - low
+        hc = high - prev_close
+        if hc < 0.0:
+            hc = -hc
+        if hc > tr:
+            tr = hc
+        lc = prev_close - low
+        if lc < 0.0:
+            lc = -lc
+        if lc > tr:
+            tr = lc
+        out.append(tr)
+        prev_close = closes[i]
     return out
 
 
@@ -332,25 +358,33 @@ def adx(
         elif down > up and down > 0:
             minus_dm[i] = down
 
-    def _dx(spd: float, smd: float, str_: float) -> float:
-        if str_ == 0:
-            return 0.0
-        plus_di = 100.0 * spd / str_
-        minus_di = 100.0 * smd / str_
-        total = plus_di + minus_di
-        return 0.0 if total == 0 else 100.0 * abs(plus_di - minus_di) / total
-
     # Wilder smoothing, seeded with plain sums over the first `period` movement bars.
-    smooth_tr = sum(tr[i] for i in range(1, period + 1))
+    # DX is inlined below (rather than a per-bar helper call) because this is the
+    # innermost loop of the regime strategy's per-bar ADX; the arithmetic is unchanged.
+    smooth_tr = sum(tr[1 : period + 1])
     smooth_pdm = sum(plus_dm[1 : period + 1])
     smooth_mdm = sum(minus_dm[1 : period + 1])
     dx = [0.0] * n
-    dx[period] = _dx(smooth_pdm, smooth_mdm, smooth_tr)
+    if smooth_tr != 0:
+        plus_di = 100.0 * smooth_pdm / smooth_tr
+        minus_di = 100.0 * smooth_mdm / smooth_tr
+        total = plus_di + minus_di
+        if total != 0:
+            diff = plus_di - minus_di
+            dx[period] = 100.0 * (diff if diff >= 0.0 else -diff) / total
     for i in range(period + 1, n):
         smooth_tr += tr[i] - smooth_tr / period
         smooth_pdm += plus_dm[i] - smooth_pdm / period
         smooth_mdm += minus_dm[i] - smooth_mdm / period
-        dx[i] = _dx(smooth_pdm, smooth_mdm, smooth_tr)
+        if smooth_tr == 0:
+            continue  # dx[i] already 0.0
+        plus_di = 100.0 * smooth_pdm / smooth_tr
+        minus_di = 100.0 * smooth_mdm / smooth_tr
+        total = plus_di + minus_di
+        if total == 0:
+            continue  # dx[i] already 0.0
+        diff = plus_di - minus_di
+        dx[i] = 100.0 * (diff if diff >= 0.0 else -diff) / total
 
     seed = sum(dx[period : 2 * period]) / period
     out[2 * period - 1] = seed
@@ -363,23 +397,32 @@ def adx(
 
 def highest(values: list[Number], period: int) -> list[Number | None]:
     """Rolling maximum over a trailing window of ``period`` values (Donchian upper)."""
-    return _rolling_extreme(values, period, max)
+    return _rolling_extreme(values, period, want_max=True)
 
 
 def lowest(values: list[Number], period: int) -> list[Number | None]:
     """Rolling minimum over a trailing window of ``period`` values (Donchian lower)."""
-    return _rolling_extreme(values, period, min)
+    return _rolling_extreme(values, period, want_max=False)
 
 
-def _rolling_extreme(values: list[Number], period: int, pick) -> list[Number | None]:
+def _rolling_extreme(values: list[Number], period: int, want_max: bool) -> list[Number | None]:
     if period <= 0:
         raise ValueError("period must be a positive integer")
     out: list[Number | None] = [None] * len(values)
-    window: deque[Number] = deque()
+    # Monotonic deque of *indices*: the front is always the window's extreme, so each bar
+    # is O(1) amortized instead of O(period) from re-scanning the window with max()/min().
+    dq: deque[int] = deque()
+    last = period - 1
     for i, v in enumerate(values):
-        window.append(v)
-        if len(window) > period:
-            window.popleft()
-        if len(window) == period:
-            out[i] = pick(window)
+        if want_max:
+            while dq and values[dq[-1]] <= v:
+                dq.pop()
+        else:
+            while dq and values[dq[-1]] >= v:
+                dq.pop()
+        dq.append(i)
+        if dq[0] <= i - period:
+            dq.popleft()
+        if i >= last:
+            out[i] = values[dq[0]]
     return out
