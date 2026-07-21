@@ -10,11 +10,13 @@ from crypto_bot.strategies.base import Strategy
 from crypto_bot.strategies.bollinger import BollingerReversion
 from crypto_bot.strategies.breakout import Breakout
 from crypto_bot.strategies.dca import DCA
+from crypto_bot.strategies.funding_bias import FundingBias
 from crypto_bot.strategies.ma_crossover import MACrossover
 from crypto_bot.strategies.macd import MACDMomentum
 from crypto_bot.strategies.regime import RegimeSwitch
 from crypto_bot.strategies.rsi_reversion import RSIReversion
 from crypto_bot.strategies.supertrend import Supertrend
+from crypto_bot.strategies.trend_ls import TrendLongShort
 
 _REGISTRY: dict[str, type[Strategy]] = {}
 
@@ -49,3 +51,6 @@ register_strategy(MACDMomentum)
 register_strategy(Supertrend)
 register_strategy(DCA)
 register_strategy(RegimeSwitch)
+# Derivatives-oriented (see docs/DERIVATIVES.md).
+register_strategy(TrendLongShort)
+register_strategy(FundingBias)

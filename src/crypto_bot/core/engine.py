@@ -17,7 +17,14 @@ import logging
 
 from crypto_bot.config import BotConfig
 from crypto_bot.core.broker import Broker, LiveBroker, PaperBroker
-from crypto_bot.core.models import Order, OrderRequest, OrderSide, SignalType
+from crypto_bot.core.models import (
+    MarketContext,
+    Order,
+    OrderRequest,
+    OrderSide,
+    PositionSide,
+    SignalType,
+)
 from crypto_bot.core.portfolio import Portfolio
 from crypto_bot.exchanges.base import ExchangeAdapter, ExchangeError
 from crypto_bot.exchanges.factory import build_exchange
@@ -48,6 +55,10 @@ class Engine:
         self._last_prices: dict[str, float] = {}
         self._candle_limit = max(strategy.warmup + 5, 200)
         self._running = False
+        self._allow_shorts = config.derivatives.allow_shorts
+        # Timestamp (ms) of the last funding settlement, so accrual happens once per
+        # interval rather than once per poll.
+        self._last_funding_ts: int | None = None
 
     # -- price access used by the paper broker ---------------------------------
     def last_price(self, symbol: str) -> float:
@@ -113,6 +124,10 @@ class Engine:
                 self.config.risk.max_drawdown_pct * 100,
             )
 
+        # 2b. Settle perpetual funding before exits, so a position that funding pushes
+        # through its stop is exited on this bar rather than the next.
+        self._settle_funding(candles_by_symbol)
+
         # 3. Protective exits first (risk has priority over fresh entries).
         exited_this_cycle: set[str] = set()
         for symbol, _candles in candles_by_symbol.items():
@@ -120,7 +135,11 @@ class Engine:
                 continue
             price = self._last_prices[symbol]
             position = self.portfolio.positions[symbol]
+            # Ratchet the favourable extreme in the direction the position profits.
             position.peak_price = max(position.peak_price, price)
+            position.trough_price = (
+                min(position.trough_price, price) if position.trough_price > 0 else price
+            )
             reason = self.risk.protective_exit(position, price)
             if reason:
                 self._close_position(symbol, reason)
@@ -128,38 +147,53 @@ class Engine:
 
         # 4. Strategy-driven entries/exits.
         for symbol, candles in candles_by_symbol.items():
-            signal = self.strategy.generate(candles, symbol)
+            signal = self._ask_strategy(candles, symbol)
             if signal.type == SignalType.HOLD:
                 continue
             price = self._last_prices[symbol]
 
-            if signal.type == SignalType.SELL:
-                if self.portfolio.has_position(symbol):
-                    self._close_position(symbol, f"strategy sell ({signal.reason})")
-                continue
+            # A signal against an open position always closes it first. With shorts
+            # enabled the engine then re-enters the other way (stop-and-reverse); the
+            # close and the entry stay separate orders so the ledger is unambiguous.
+            position = self.portfolio.positions.get(symbol)
+            if position is not None and position.amount > 0:
+                opposes = (
+                    signal.type == SignalType.SELL
+                    if not position.is_short
+                    else signal.type == SignalType.BUY
+                )
+                if opposes:
+                    self._close_position(symbol, f"strategy {signal.type.value} ({signal.reason})")
+                # A signal that *agrees* with the open position falls through to sizing,
+                # where allow_averaging_in decides whether to top it up (DCA) or decline.
 
-            # BUY
+            wants_short = signal.type == SignalType.SELL
+            if wants_short and not self._allow_shorts:
+                continue  # spot mode: a SELL is purely an exit
             if symbol in exited_this_cycle:
                 continue  # don't re-enter a symbol we just stopped out of this cycle
             if halted:
                 continue
+
+            side = PositionSide.SHORT if wants_short else PositionSide.LONG
             has_position = self.portfolio.has_position(symbol)
             position_notional = (
                 self.portfolio.positions[symbol].notional(price) if has_position else 0.0
             )
-            decision = self.risk.size_buy(
+            decision = self.risk.size_entry(
                 equity=equity,
                 price=price,
                 open_positions=self.portfolio.open_position_count,
                 has_position=has_position,
                 position_notional=position_notional,
+                side=side,
             )
             if not decision.approved:
-                self.log.debug("buy %s skipped: %s", symbol, decision.reason)
+                self.log.debug("%s %s skipped: %s", side.value, symbol, decision.reason)
                 continue
             request = OrderRequest(
                 symbol=symbol,
-                side=OrderSide.BUY,
+                side=OrderSide.SELL if wants_short else OrderSide.BUY,
                 amount=decision.amount,
                 reason=f"{signal.reason} | {decision.reason}",
             )
@@ -168,11 +202,71 @@ class Engine:
         self.log.info("cycle complete | %s", self.portfolio.snapshot(self._last_prices))
 
     # -- helpers ---------------------------------------------------------------
+    def _ask_strategy(self, candles: list, symbol: str):
+        """Get a signal, supplying market context only to strategies that asked for it."""
+        if not getattr(self.strategy, "wants_context", False):
+            return self.strategy.generate(candles, symbol)
+        return self.strategy.generate(candles, symbol, self._context_for(symbol))
+
+    def _context_for(self, symbol: str) -> MarketContext:
+        rate = self.exchange.fetch_funding_rate(symbol)
+        if rate is None and self.config.derivatives.funding_rate:
+            # Fall back to the configured rate so backtests and venues without a funding
+            # endpoint still expose a usable signal.
+            rate = self.config.derivatives.funding_rate
+        return MarketContext(
+            symbol=symbol,
+            funding_rate=rate,
+            funding_interval_hours=self.config.derivatives.funding_interval_hours,
+        )
+
+    def _settle_funding(self, candles_by_symbol: dict) -> None:
+        """Charge/credit perpetual funding once per funding interval."""
+        if not candles_by_symbol:
+            return
+        interval_ms = int(self.config.derivatives.funding_interval_hours * 3_600_000)
+        if interval_ms <= 0:
+            return
+        now = max(c[-1].timestamp for c in candles_by_symbol.values())
+        # Anchor the clock on the first cycle even when flat, so the first position
+        # opened is not immediately charged for time it was not held.
+        if self._last_funding_ts is None:
+            self._last_funding_ts = now
+            return
+        elapsed = now - self._last_funding_ts
+        if elapsed < interval_ms:
+            return
+
+        # Catch up whole intervals, so a coarse timeframe (e.g. 1d bars with 8h funding)
+        # still pays the right number of settlements. The clock advances whether or not we
+        # hold anything, otherwise a flat spell would bank intervals and over-charge later.
+        intervals = int(elapsed // interval_ms)
+        self._last_funding_ts += intervals * interval_ms
+        if not self.portfolio.positions:
+            return
+
+        fallback = self.config.derivatives.funding_rate
+        rates: dict[str, float] = {}
+        for symbol in self.portfolio.positions:
+            rate = self.exchange.fetch_funding_rate(symbol)
+            if rate is None:
+                rate = fallback
+            if rate:
+                rates[symbol] = rate
+        if not rates:
+            return
+        for _ in range(intervals):
+            paid = self.portfolio.apply_funding(rates, self._last_prices)
+            if paid:
+                self.log.debug("funding settled: %+.4f %s", -paid, self.portfolio.quote_currency)
+
     def _close_position(self, symbol: str, reason: str) -> None:
         position = self.portfolio.positions[symbol]
+        # Closing a short means buying it back.
+        side = OrderSide.BUY if position.is_short else OrderSide.SELL
         request = OrderRequest(
             symbol=symbol,
-            side=OrderSide.SELL,
+            side=side,
             amount=position.amount,
             reason=reason,
         )
@@ -232,11 +326,17 @@ def build_engine(config: BotConfig, logger: logging.Logger | None = None) -> Eng
             cash,
             config.paper.quote_currency,
         )
-        portfolio = Portfolio(cash=cash, quote_currency=config.paper.quote_currency)
+        portfolio = Portfolio(
+            cash=cash,
+            quote_currency=config.paper.quote_currency,
+            allow_shorts=config.derivatives.allow_shorts,
+        )
         broker: Broker = LiveBroker(exchange)
     else:
         portfolio = Portfolio(
-            cash=config.paper.starting_cash, quote_currency=config.paper.quote_currency
+            cash=config.paper.starting_cash,
+            quote_currency=config.paper.quote_currency,
+            allow_shorts=config.derivatives.allow_shorts,
         )
         broker = None  # set below, needs the engine's price cache
 

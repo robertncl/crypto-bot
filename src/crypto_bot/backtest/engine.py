@@ -130,6 +130,7 @@ class BacktestResult:
     profit_factor: float
     realized_pnl: float
     fees_paid: float
+    funding_paid: float
     open_positions: int
     quote_currency: str
     equity_curve: list[tuple[int, float]] = field(repr=False, default_factory=list)
@@ -157,7 +158,8 @@ class BacktestResult:
             f"max drawdown    {self.max_drawdown_pct:.2%}",
             f"trades          {self.num_trades}"
             f"   (win rate {self.win_rate_pct:.0%}, profit factor {_ratio(self.profit_factor)})",
-            f"realized pnl    {self.realized_pnl:+,.2f}   fees {self.fees_paid:,.2f}",
+            f"realized pnl    {self.realized_pnl:+,.2f}   fees {self.fees_paid:,.2f}"
+            + (f"   funding {self.funding_paid:+,.2f}" if self.funding_paid else ""),
             f"open at end     {self.open_positions} position(s)",
             "─────────────────────────────────────────────────────────",
         ]
@@ -181,6 +183,7 @@ class Backtester:
         portfolio = Portfolio(
             cash=self.config.paper.starting_cash,
             quote_currency=self.config.paper.quote_currency,
+            allow_shorts=self.config.derivatives.allow_shorts,
         )
         # Silence the engine's per-cycle INFO chatter; fills and warnings still surface
         # through the backtest logger at DEBUG for troubleshooting.
@@ -267,6 +270,7 @@ class Backtester:
             profit_factor=m.profit_factor(trades),
             realized_pnl=portfolio.realized_pnl,
             fees_paid=portfolio.fees_paid,
+            funding_paid=portfolio.funding_paid,
             open_positions=portfolio.open_position_count,
             quote_currency=self.config.paper.quote_currency,
             equity_curve=equity_curve,
