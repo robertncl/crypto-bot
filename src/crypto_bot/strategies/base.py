@@ -16,6 +16,12 @@ from crypto_bot.core.models import Candle, Signal
 class Strategy(ABC):
     name: str = "base"
 
+    #: Opt-in flag. When True the engine calls ``generate(candles, symbol, context)`` with
+    #: a :class:`~crypto_bot.core.models.MarketContext` carrying non-OHLCV data (funding
+    #: rate). Candle-only strategies leave this False and keep the two-argument signature,
+    #: so adding derivatives data costs the existing strategies nothing.
+    wants_context: bool = False
+
     def __init__(self, params: dict | None = None) -> None:
         self.params = params or {}
 

@@ -126,9 +126,10 @@ See [`config/config.example.yaml`](config/config.example.yaml) for the fully-com
 
 ### Strategies
 
-Eight strategies ship built-in (list them with `crypto-bot strategies`). They cover both
+Ten strategies ship built-in (list them with `crypto-bot strategies`). They cover both
 families — trend-following (buy strength) and mean-reversion (buy weakness) — plus a
-scheduled accumulator and a regime-switching ensemble that combines the two families:
+scheduled accumulator, a regime-switching ensemble that combines the two families, and two
+derivatives-oriented strategies for perpetual swaps:
 
 | `name` | Family | Temperament | Key params (defaults) |
 | --- | --- | --- | --- |
@@ -140,13 +141,24 @@ scheduled accumulator and a regime-switching ensemble that combines the two fami
 | `bollinger` | Mean-reversion | Conservative | `period` 20, `num_std` 2.0 |
 | `dca` | Scheduled accumulation | Earn / buy-and-hold | `every` 1 (buy every N candles) |
 | `regime` | Ensemble (ADX-routed) | Adaptive | `adx_period` 14, `adx_threshold` 25, `trend`/`range` legs |
+| `trend_ls` | Trend-following (long/short) | Selective | `lookback` 20, `adx_threshold` 20, `trend_period` 100 |
+| `funding_bias` | Contrarian carry (perps) | Contrarian | `enter_apr` 0.20, `trend_period` 100 |
 
 The first six are **edge-triggered** (a signal fires once, on the bar the condition flips,
 not on every bar after) and long-only; `dca` is **schedule-based** — it buys a tranche every
 `every` candles and accumulates (needs `risk.allow_averaging_in: true`); `regime` measures
 trend strength with **ADX** each bar and delegates to a trend-following leg in trending
 markets and a mean-reversion leg in ranging ones (both legs are ordinary registered
-strategies, configured by name). See [docs/STRATEGY_GUIDE.md](docs/STRATEGY_GUIDE.md) for how
+strategies, configured by name).
+
+`trend_ls` and `funding_bias` target **perpetual swaps**. Enable `derivatives.allow_shorts`
+and every strategy above becomes long/short (they already emit SELL — it just stops being
+only an exit), so a downtrend becomes tradable rather than something to sit out.
+`funding_bias` trades the funding rate itself, which is the one signal that has no spot
+equivalent. See [docs/DERIVATIVES.md](docs/DERIVATIVES.md) — including what is deliberately
+*not* implemented (leverage, liquidation, delta-neutral legs) and why.
+
+See [docs/STRATEGY_GUIDE.md](docs/STRATEGY_GUIDE.md) for how
 each one thinks and when it wins or loses.
 
 ### Risk profiles

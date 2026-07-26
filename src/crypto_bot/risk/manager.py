@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from crypto_bot.config import RiskConfig
-from crypto_bot.core.models import Position
+from crypto_bot.core.models import Position, PositionSide
 
 
 @dataclass
@@ -47,7 +47,7 @@ class RiskManager:
             return False
         return self.drawdown(equity) >= self.cfg.max_drawdown_pct
 
-    def size_buy(
+    def size_entry(
         self,
         *,
         equity: float,
@@ -55,14 +55,19 @@ class RiskManager:
         open_positions: int,
         has_position: bool,
         position_notional: float = 0.0,
+        side: PositionSide = PositionSide.LONG,
     ) -> RiskDecision:
-        """Decide whether and how large a long buy may be.
+        """Decide whether and how large an entry may be, long or short.
 
-        By default only *new* positions are allowed: holding the symbol blocks the buy,
-        which keeps signal strategies from re-buying on every poll. When
+        Sizing is direction-agnostic — a short risks the same fraction of equity as a long,
+        so ``side`` only colours the reason string. What differs between the two is the
+        *exit* (see :meth:`protective_exit`), not the stake.
+
+        By default only *new* positions are allowed: holding the symbol blocks the entry,
+        which keeps signal strategies from re-entering on every poll. When
         ``allow_averaging_in`` is set (for accumulate/DCA strategies) a held symbol may be
         topped up, optionally capped at ``max_position_pct`` of equity via
-        ``position_notional`` (the symbol's current mark-to-market value).
+        ``position_notional`` (the symbol's current mark-to-market exposure).
         """
         if price <= 0:
             return RiskDecision(False, reason="invalid price")
@@ -91,27 +96,50 @@ class RiskManager:
         if amount <= 0:
             return RiskDecision(False, reason="position size rounds to zero")
         verb = "add" if has_position else "allocate"
+        direction = " short" if side == PositionSide.SHORT else ""
         return RiskDecision(
             True,
             amount=amount,
-            reason=f"{verb} {notional / equity:.0%} of equity ({notional:.2f})",
+            reason=f"{verb}{direction} {notional / equity:.0%} of equity ({notional:.2f})",
         )
 
     def protective_exit(self, position: Position, price: float) -> str | None:
-        """Return a reason string if this position should be force-closed, else None."""
+        """Return a reason string if this position should be force-closed, else None.
+
+        Stop-loss and take-profit read :meth:`Position.unrealized_pnl_pct`, which is already
+        direction-aware, so they need no branching. The trailing stop does: it ratchets from
+        the *most favourable* price seen, which is the high-water mark for a long and the
+        low-water mark for a short.
+        """
         pnl_pct = position.unrealized_pnl_pct(price)
         if self.cfg.stop_loss_pct > 0 and pnl_pct <= -self.cfg.stop_loss_pct:
             return f"stop-loss hit ({pnl_pct:.2%} <= -{self.cfg.stop_loss_pct:.2%})"
         if self.cfg.trailing_stop_pct > 0:
-            # The peak ratchets up with price (engine/portfolio maintain it); fall back
-            # to entry so a position created before this feature still gets a floor.
-            peak = max(position.peak_price, position.entry_price)
-            if peak > 0 and price <= peak * (1 - self.cfg.trailing_stop_pct):
-                drop = (peak - price) / peak
-                return (
-                    f"trailing-stop hit ({drop:.2%} below peak {peak:.4f} "
-                    f">= {self.cfg.trailing_stop_pct:.2%})"
-                )
+            trail = self._trailing_exit(position, price)
+            if trail:
+                return trail
         if self.cfg.take_profit_pct > 0 and pnl_pct >= self.cfg.take_profit_pct:
             return f"take-profit hit ({pnl_pct:.2%} >= {self.cfg.take_profit_pct:.2%})"
+        return None
+
+    def _trailing_exit(self, position: Position, price: float) -> str | None:
+        # The extreme ratchets with price (the engine maintains it); fall back to entry so
+        # a position created before this feature still gets a floor.
+        if position.is_short:
+            trough = position.trough_price if position.trough_price > 0 else position.entry_price
+            trough = min(trough, position.entry_price)
+            if trough > 0 and price >= trough * (1 + self.cfg.trailing_stop_pct):
+                rise = (price - trough) / trough
+                return (
+                    f"trailing-stop hit ({rise:.2%} above trough {trough:.4f} "
+                    f">= {self.cfg.trailing_stop_pct:.2%})"
+                )
+            return None
+        peak = max(position.peak_price, position.entry_price)
+        if peak > 0 and price <= peak * (1 - self.cfg.trailing_stop_pct):
+            drop = (peak - price) / peak
+            return (
+                f"trailing-stop hit ({drop:.2%} below peak {peak:.4f} "
+                f">= {self.cfg.trailing_stop_pct:.2%})"
+            )
         return None

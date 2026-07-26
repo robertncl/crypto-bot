@@ -82,14 +82,27 @@ def rsi(values: list[Number], period: int = 14) -> list[Number | None]:
     # is a measurable share of this loop's cost.
     out[period] = 100.0 if avg_loss == 0 else 100.0 - (100.0 / (1.0 + avg_gain / avg_loss))
 
-    decay = period - 1
-    for i in range(period + 1, n):
-        change = values[i] - values[i - 1]
-        gain = change if change > 0 else 0.0
-        loss = -change if change < 0 else 0.0
-        avg_gain = (avg_gain * decay + gain) / period
-        avg_loss = (avg_loss * decay + loss) / period
-        out[i] = 100.0 if avg_loss == 0 else 100.0 - (100.0 / (1.0 + avg_gain / avg_loss))
+    # Hot loop: hoist the constant divisor and inline _rsi_from_averages to avoid a
+    # function call per bar. Result is identical to the helper.
+    prev_weight = period - 1
+    prev = values[period]
+    for i in range(period + 1, len(values)):
+        cur = values[i]
+        change = cur - prev
+        prev = cur
+        if change > 0:
+            avg_gain = (avg_gain * prev_weight + change) / period
+            avg_loss = (avg_loss * prev_weight) / period
+        elif change < 0:
+            avg_gain = (avg_gain * prev_weight) / period
+            avg_loss = (avg_loss * prev_weight - change) / period
+        else:
+            avg_gain = (avg_gain * prev_weight) / period
+            avg_loss = (avg_loss * prev_weight) / period
+        if avg_loss == 0:
+            out[i] = 100.0
+        else:
+            out[i] = 100.0 - (100.0 / (1.0 + avg_gain / avg_loss))
     return out
 
 
@@ -224,22 +237,29 @@ def true_range(
     n = len(closes)
     if not (len(highs) == len(lows) == n):
         raise ValueError("highs, lows and closes must be the same length")
-    out: list[Number | None] = [None] * n
     if n == 0:
-        return out
-    out[0] = highs[0] - lows[0]
+        return []
+    # Inline abs()/max() as comparisons and carry prev_close forward: this is a per-bar
+    # hot loop in every ATR/ADX/Supertrend evaluation, and the builtin-call overhead
+    # dominated it. Values are identical to max(h-l, |h-pc|, |l-pc|).
+    out: list[Number | None] = [highs[0] - lows[0]]
+    prev_close = closes[0]
     for i in range(1, n):
-        prev_close = closes[i - 1]
-        hi = highs[i]
-        lo = lows[i]
-        # For any bar with low <= high, max(h−l, |h−pc|, |l−pc|) is exactly
-        # max(h, pc) − min(l, pc) — same subtraction, chosen with two comparisons
-        # instead of two abs() calls and a three-way max().
-        if prev_close > hi:
-            hi = prev_close
-        if prev_close < lo:
-            lo = prev_close
-        out[i] = hi - lo
+        high = highs[i]
+        low = lows[i]
+        tr = high - low
+        hc = high - prev_close
+        if hc < 0.0:
+            hc = -hc
+        if hc > tr:
+            tr = hc
+        lc = prev_close - low
+        if lc < 0.0:
+            lc = -lc
+        if lc > tr:
+            tr = lc
+        out.append(tr)
+        prev_close = closes[i]
     return out
 
 
@@ -401,25 +421,35 @@ def adx(
             plus_dm = up
             minus_dm = 0.0
         elif down > up and down > 0:
-            plus_dm = 0.0
-            minus_dm = down
-        else:
-            plus_dm = 0.0
-            minus_dm = 0.0
+            minus_dm[i] = down
 
-        if i <= period:
-            seed_tr.append(tr)
-            seed_pdm.append(plus_dm)
-            seed_mdm.append(minus_dm)
-            if i < period:
-                continue
-            smooth_tr = sum(seed_tr)
-            smooth_pdm = sum(seed_pdm)
-            smooth_mdm = sum(seed_mdm)
-        else:
-            smooth_tr += tr - smooth_tr / period
-            smooth_pdm += plus_dm - smooth_pdm / period
-            smooth_mdm += minus_dm - smooth_mdm / period
+    # Wilder smoothing, seeded with plain sums over the first `period` movement bars.
+    # DX is inlined below (rather than a per-bar helper call) because this is the
+    # innermost loop of the regime strategy's per-bar ADX; the arithmetic is unchanged.
+    smooth_tr = sum(tr[1 : period + 1])
+    smooth_pdm = sum(plus_dm[1 : period + 1])
+    smooth_mdm = sum(minus_dm[1 : period + 1])
+    dx = [0.0] * n
+    if smooth_tr != 0:
+        plus_di = 100.0 * smooth_pdm / smooth_tr
+        minus_di = 100.0 * smooth_mdm / smooth_tr
+        total = plus_di + minus_di
+        if total != 0:
+            diff = plus_di - minus_di
+            dx[period] = 100.0 * (diff if diff >= 0.0 else -diff) / total
+    for i in range(period + 1, n):
+        smooth_tr += tr[i] - smooth_tr / period
+        smooth_pdm += plus_dm[i] - smooth_pdm / period
+        smooth_mdm += minus_dm[i] - smooth_mdm / period
+        if smooth_tr == 0:
+            continue  # dx[i] already 0.0
+        plus_di = 100.0 * smooth_pdm / smooth_tr
+        minus_di = 100.0 * smooth_mdm / smooth_tr
+        total = plus_di + minus_di
+        if total == 0:
+            continue  # dx[i] already 0.0
+        diff = plus_di - minus_di
+        dx[i] = 100.0 * (diff if diff >= 0.0 else -diff) / total
 
         if smooth_tr == 0:
             dx = 0.0
@@ -446,45 +476,32 @@ def adx(
 
 def highest(values: list[Number], period: int) -> list[Number | None]:
     """Rolling maximum over a trailing window of ``period`` values (Donchian upper)."""
-    if period <= 0:
-        raise ValueError("period must be a positive integer")
-    n = len(values)
-    out: list[Number | None] = [None] * n
-    # Monotonic deque of candidate indices whose values decrease from the front, so the
-    # front is always the window's maximum. Every index is pushed and popped at most
-    # once: O(n) overall, where re-scanning the window each bar would be O(n × period).
-    candidates: deque[int] = deque()
-    last = period - 1
-    for i in range(n):
-        v = values[i]
-        while candidates and values[candidates[-1]] <= v:
-            candidates.pop()
-        candidates.append(i)
-        if candidates[0] <= i - period:
-            candidates.popleft()
-        if i >= last:
-            out[i] = values[candidates[0]]
-    return out
+    return _rolling_extreme(values, period, want_max=True)
 
 
 def lowest(values: list[Number], period: int) -> list[Number | None]:
     """Rolling minimum over a trailing window of ``period`` values (Donchian lower)."""
+    return _rolling_extreme(values, period, want_max=False)
+
+
+def _rolling_extreme(values: list[Number], period: int, want_max: bool) -> list[Number | None]:
     if period <= 0:
         raise ValueError("period must be a positive integer")
-    n = len(values)
-    out: list[Number | None] = [None] * n
-    # Mirror of `highest`: same monotonic-deque scan, values increasing from the front.
-    # Spelled out rather than parameterised by a comparator, because a function call per
-    # element is most of the cost this algorithm exists to avoid.
-    candidates: deque[int] = deque()
+    out: list[Number | None] = [None] * len(values)
+    # Monotonic deque of *indices*: the front is always the window's extreme, so each bar
+    # is O(1) amortized instead of O(period) from re-scanning the window with max()/min().
+    dq: deque[int] = deque()
     last = period - 1
-    for i in range(n):
-        v = values[i]
-        while candidates and values[candidates[-1]] >= v:
-            candidates.pop()
-        candidates.append(i)
-        if candidates[0] <= i - period:
-            candidates.popleft()
+    for i, v in enumerate(values):
+        if want_max:
+            while dq and values[dq[-1]] <= v:
+                dq.pop()
+        else:
+            while dq and values[dq[-1]] >= v:
+                dq.pop()
+        dq.append(i)
+        if dq[0] <= i - period:
+            dq.popleft()
         if i >= last:
-            out[i] = values[candidates[0]]
+            out[i] = values[dq[0]]
     return out

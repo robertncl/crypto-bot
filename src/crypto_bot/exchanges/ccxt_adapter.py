@@ -96,6 +96,23 @@ class CCXTAdapter(ExchangeAdapter):
             raise ExchangeError(f"no last price available for {symbol} on {self.name}")
         return float(last)
 
+    def fetch_funding_rate(self, symbol: str) -> float | None:
+        """Current funding rate for a perp, or None if this market/venue has none.
+
+        Failures are swallowed to None rather than raised: funding is an *enrichment*, and
+        a venue hiccup here should degrade the strategy to its configured fallback rather
+        than kill a polling cycle that could still manage open positions.
+        """
+        fetcher = getattr(self.client, "fetch_funding_rate", None)
+        if not callable(fetcher) or not self.client.has.get("fetchFundingRate"):
+            return None
+        try:
+            info = fetcher(symbol)
+        except ccxt.BaseError:
+            return None
+        rate = info.get("fundingRate") if isinstance(info, dict) else None
+        return float(rate) if rate is not None else None
+
     def fetch_balance(self) -> dict[str, float]:
         try:
             balances = self.client.fetch_balance()

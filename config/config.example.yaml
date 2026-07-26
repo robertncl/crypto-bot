@@ -51,6 +51,23 @@ risk:
   # (0 disables the cap). Only meaningful with allow_averaging_in: true.
   max_position_pct: 0.0
 
+# Perpetual-swap / derivatives settings. Everything here is off by default, so the bot
+# behaves as a long-only spot bot unless you deliberately turn it on.
+# See docs/DERIVATIVES.md before enabling any of this.
+derivatives:
+  # Let a SELL signal with nothing held OPEN A SHORT rather than be a no-op. This is the
+  # switch that makes downtrends tradable — and it makes every existing strategy
+  # long/short, since they already emit SELL. Requires a venue/symbol that supports
+  # shorting (a perp market such as BTC/USDT:USDT), NOT a spot pair.
+  allow_shorts: false
+  # Hours between funding settlements (8h on Binance/Bybit/OKX perps).
+  funding_interval_hours: 8
+  # Per-interval funding rate used for paper/backtest accrual when the venue does not
+  # supply a live rate. POSITIVE = longs pay shorts. 0.0001 (1bp per 8h ≈ 11%/yr) is
+  # near the long-run crypto average. In live mode the real venue rate is used when
+  # available and this is only the fallback.
+  funding_rate: 0.0
+
 # Paper-trading simulation parameters.
 paper:
   starting_cash: 10000.0   # in the quote currency (e.g. USDT)

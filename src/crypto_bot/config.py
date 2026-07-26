@@ -50,6 +50,21 @@ class RiskConfig:
 
 
 @dataclass
+class DerivativesConfig:
+    """Perpetual-swap settings. All off by default, so spot behaviour is the baseline."""
+
+    # Let a SELL with no long open a short instead of being a no-op. This is what makes
+    # downtrends tradable; every existing strategy becomes long/short when it is on.
+    allow_shorts: bool = False
+    # Hours between funding settlements (8h on Binance/Bybit/OKX perps).
+    funding_interval_hours: float = 8.0
+    # Per-interval funding rate used for paper/backtest accrual when a live venue rate is
+    # unavailable. Positive = longs pay shorts. 0.0001 (1bp/8h) is roughly the long-run
+    # crypto average, which works out to ~11%/yr paid by longs.
+    funding_rate: float = 0.0
+
+
+@dataclass
 class PaperConfig:
     starting_cash: float = 10_000.0
     quote_currency: str = "USDT"
@@ -74,6 +89,7 @@ class BotConfig:
     risk: RiskConfig
     paper: PaperConfig
     logging: LoggingConfig
+    derivatives: DerivativesConfig = field(default_factory=DerivativesConfig)
 
     @property
     def is_live(self) -> bool:
@@ -129,6 +145,7 @@ def _build_config(raw: dict) -> BotConfig:
     risk = _build_risk(raw.get("risk") or {})
     paper = _build_paper(raw.get("paper") or {})
     logging_cfg = _build_logging(raw.get("logging") or {})
+    derivatives = _build_derivatives(raw.get("derivatives") or {})
 
     timeframe = str(raw.get("timeframe", "1h"))
     poll_seconds = int(raw.get("poll_seconds", 60))
@@ -136,8 +153,9 @@ def _build_config(raw: dict) -> BotConfig:
         raise ConfigError("poll_seconds must be a positive integer")
 
     # The paper portfolio tracks a single cash currency, so every symbol must quote in it.
+    # Perp symbols carry a settlement suffix (BTC/USDT:USDT) — compare the quote only.
     if mode == "paper":
-        bad = [s for s in symbols if s.split("/")[1] != paper.quote_currency]
+        bad = [s for s in symbols if s.split("/")[1].split(":")[0] != paper.quote_currency]
         if bad:
             raise ConfigError(
                 f"in paper mode every symbol must quote in paper.quote_currency "
@@ -154,7 +172,26 @@ def _build_config(raw: dict) -> BotConfig:
         risk=risk,
         paper=paper,
         logging=logging_cfg,
+        derivatives=derivatives,
     )
+
+
+def _build_derivatives(raw: dict) -> DerivativesConfig:
+    cfg = DerivativesConfig(
+        allow_shorts=bool(raw.get("allow_shorts", False)),
+        funding_interval_hours=float(raw.get("funding_interval_hours", 8.0)),
+        funding_rate=float(raw.get("funding_rate", 0.0)),
+    )
+    if cfg.funding_interval_hours <= 0:
+        raise ConfigError("derivatives.funding_interval_hours must be positive")
+    # A per-interval rate beyond ±1% is almost certainly an annualized figure pasted in
+    # by mistake, which would silently drain the account over a backtest.
+    if abs(cfg.funding_rate) > 0.01:
+        raise ConfigError(
+            f"derivatives.funding_rate is a *per-interval* rate (e.g. 0.0001 = 1bp per "
+            f"{cfg.funding_interval_hours:g}h); {cfg.funding_rate} looks annualized"
+        )
+    return cfg
 
 
 def _build_risk(raw: dict) -> RiskConfig:

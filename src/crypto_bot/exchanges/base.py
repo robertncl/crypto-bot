@@ -52,5 +52,14 @@ class ExchangeAdapter(ABC):
     def cancel_order(self, order_id: str, symbol: str) -> None:
         """Cancel an open order. Requires API keys."""
 
+    def fetch_funding_rate(self, symbol: str) -> float | None:
+        """Current perpetual funding rate for ``symbol``, or None if not applicable.
+
+        Concrete but non-abstract: spot venues, fakes and the backtest replay have no
+        funding endpoint, and none of them should be forced to implement one. A ``None``
+        return means "unknown", which callers treat as "fall back to the configured rate".
+        """
+        return None
+
     def close(self) -> None:  # noqa: B027 - intentional no-op default; ccxt adapter overrides
         """Release any underlying resources. Safe to call multiple times (default: no-op)."""
