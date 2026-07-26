@@ -7,6 +7,14 @@ trivial to zip indicator values back onto candles.
 
 These are intentionally dependency-free (no pandas/numpy) so the strategy and test
 layers stay lightweight and fast.
+
+**Performance.** Strategies re-run these over a rolling window on *every* bar, so a
+backtest calls them tens of thousands of times and they dominate its runtime. The
+implementations therefore keep running state in local scalars instead of intermediate
+lists, avoid per-element function calls in the inner loops, and use O(n) algorithms
+throughout (notably a monotonic deque for the rolling extremes, which replaces an
+O(n × period) scan). Arithmetic is deliberately written in the same order a naive
+implementation would evaluate it, so results are bit-for-bit unchanged.
 """
 
 from __future__ import annotations
@@ -20,15 +28,15 @@ def sma(values: list[Number], period: int) -> list[Number | None]:
     """Simple moving average."""
     if period <= 0:
         raise ValueError("period must be a positive integer")
-    out: list[Number | None] = [None] * len(values)
-    window: deque[Number] = deque()
+    n = len(values)
+    out: list[Number | None] = [None] * n
     running = 0.0
-    for i, v in enumerate(values):
-        window.append(v)
-        running += v
-        if len(window) > period:
-            running -= window.popleft()
-        if len(window) == period:
+    last = period - 1
+    for i in range(n):
+        running += values[i]
+        if i > last:
+            running -= values[i - period]
+        if i >= last:
             out[i] = running / period
     return out
 
@@ -37,14 +45,15 @@ def ema(values: list[Number], period: int) -> list[Number | None]:
     """Exponential moving average, seeded with the SMA of the first ``period`` values."""
     if period <= 0:
         raise ValueError("period must be a positive integer")
-    out: list[Number | None] = [None] * len(values)
-    if len(values) < period:
+    n = len(values)
+    out: list[Number | None] = [None] * n
+    if n < period:
         return out
     multiplier = 2.0 / (period + 1)
     seed = sum(values[:period]) / period
     out[period - 1] = seed
     prev = seed
-    for i in range(period, len(values)):
+    for i in range(period, n):
         prev = (values[i] - prev) * multiplier + prev
         out[i] = prev
     return out
@@ -54,8 +63,9 @@ def rsi(values: list[Number], period: int = 14) -> list[Number | None]:
     """Relative Strength Index using Wilder's smoothing."""
     if period <= 0:
         raise ValueError("period must be a positive integer")
-    out: list[Number | None] = [None] * len(values)
-    if len(values) <= period:
+    n = len(values)
+    out: list[Number | None] = [None] * n
+    if n <= period:
         return out
 
     gains = 0.0
@@ -68,7 +78,9 @@ def rsi(values: list[Number], period: int = 14) -> list[Number | None]:
             losses -= change
     avg_gain = gains / period
     avg_loss = losses / period
-    out[period] = _rsi_from_averages(avg_gain, avg_loss)
+    # RSI from the smoothed averages, inlined here and below: a helper call per bar
+    # is a measurable share of this loop's cost.
+    out[period] = 100.0 if avg_loss == 0 else 100.0 - (100.0 / (1.0 + avg_gain / avg_loss))
 
     # Hot loop: hoist the constant divisor and inline _rsi_from_averages to avoid a
     # function call per bar. Result is identical to the helper.
@@ -94,13 +106,6 @@ def rsi(values: list[Number], period: int = 14) -> list[Number | None]:
     return out
 
 
-def _rsi_from_averages(avg_gain: float, avg_loss: float) -> float:
-    if avg_loss == 0:
-        return 100.0
-    rs = avg_gain / avg_loss
-    return 100.0 - (100.0 / (1.0 + rs))
-
-
 def moving_average(values: list[Number], period: int, kind: str = "ema") -> list[Number | None]:
     """Dispatch helper: ``kind`` is 'ema' or 'sma'."""
     kind = kind.lower()
@@ -119,23 +124,24 @@ def stddev(values: list[Number], period: int) -> list[Number | None]:
     """
     if period <= 0:
         raise ValueError("period must be a positive integer")
-    out: list[Number | None] = [None] * len(values)
-    window: deque[Number] = deque()
+    n = len(values)
+    out: list[Number | None] = [None] * n
     running = 0.0
     running_sq = 0.0
-    for i, v in enumerate(values):
-        window.append(v)
+    last = period - 1
+    for i in range(n):
+        v = values[i]
         running += v
         running_sq += v * v
-        if len(window) > period:
-            old = window.popleft()
+        if i > last:
+            old = values[i - period]
             running -= old
             running_sq -= old * old
-        if len(window) == period:
+        if i >= last:
             mean = running / period
             # Clamp tiny negatives from floating-point error before the square root.
-            variance = max(0.0, running_sq / period - mean * mean)
-            out[i] = variance**0.5
+            variance = running_sq / period - mean * mean
+            out[i] = (variance if variance > 0.0 else 0.0) ** 0.5
     return out
 
 
@@ -148,15 +154,32 @@ def bollinger_bands(
     Each returned list is aligned with ``values`` and left-padded with ``None`` over
     the warm-up period.
     """
-    middle = sma(values, period)
-    sd = stddev(values, period)
-    lower: list[Number | None] = [None] * len(values)
-    upper: list[Number | None] = [None] * len(values)
-    for i, (m, s) in enumerate(zip(middle, sd, strict=True)):
-        if m is None or s is None:
-            continue
-        lower[i] = m - num_std * s
-        upper[i] = m + num_std * s
+    if period <= 0:
+        raise ValueError("period must be a positive integer")
+    n = len(values)
+    lower: list[Number | None] = [None] * n
+    middle: list[Number | None] = [None] * n
+    upper: list[Number | None] = [None] * n
+    # One fused pass: the mean and the rolling variance share the same window sums, so
+    # computing them together avoids three separate traversals of `values`.
+    running = 0.0
+    running_sq = 0.0
+    last = period - 1
+    for i in range(n):
+        v = values[i]
+        running += v
+        running_sq += v * v
+        if i > last:
+            old = values[i - period]
+            running -= old
+            running_sq -= old * old
+        if i >= last:
+            mean = running / period
+            variance = running_sq / period - mean * mean
+            offset = num_std * (variance if variance > 0.0 else 0.0) ** 0.5
+            middle[i] = mean
+            lower[i] = mean - offset
+            upper[i] = mean + offset
     return lower, middle, upper
 
 
@@ -177,26 +200,29 @@ def macd(
     if fast >= slow:
         raise ValueError("fast period must be smaller than slow period")
 
+    n = len(values)
+    macd_line: list[Number | None] = [None] * n
+    signal_line: list[Number | None] = [None] * n
+    histogram: list[Number | None] = [None] * n
+    if n < slow:
+        return macd_line, signal_line, histogram
+
     fast_ema = ema(values, fast)
     slow_ema = ema(values, slow)
-    macd_line: list[Number | None] = [None] * len(values)
-    for i, (f, s) in enumerate(zip(fast_ema, slow_ema, strict=True)):
-        if f is not None and s is not None:
-            macd_line[i] = f - s
+    # Both EMAs are defined from `slow - 1` onward (fast is defined earlier still), so
+    # the MACD line's warm-up is known outright — no need to scan for it.
+    start = slow - 1
+    for i in range(start, n):
+        macd_line[i] = fast_ema[i] - slow_ema[i]
 
-    signal_line: list[Number | None] = [None] * len(values)
-    histogram: list[Number | None] = [None] * len(values)
     # The MACD line is defined over a single contiguous tail; take the EMA of just
     # that region, then re-align the result back onto the full-length output.
-    start = next((i for i, v in enumerate(macd_line) if v is not None), None)
-    if start is not None:
-        defined = [v for v in macd_line[start:]]
-        sig = ema(defined, signal)
-        for offset, s in enumerate(sig):
-            if s is not None:
-                idx = start + offset
-                signal_line[idx] = s
-                histogram[idx] = macd_line[idx] - s
+    sig = ema(macd_line[start:], signal)
+    for offset in range(signal - 1, len(sig)):
+        s = sig[offset]
+        idx = start + offset
+        signal_line[idx] = s
+        histogram[idx] = macd_line[idx] - s
     return macd_line, signal_line, histogram
 
 
@@ -245,14 +271,16 @@ def atr(
     if period <= 0:
         raise ValueError("period must be a positive integer")
     tr = true_range(highs, lows, closes)
-    out: list[Number | None] = [None] * len(closes)
-    if len(closes) < period:
+    n = len(closes)
+    out: list[Number | None] = [None] * n
+    if n < period:
         return out
     seed = sum(tr[:period]) / period  # type: ignore[arg-type]  # tr has no None values
     out[period - 1] = seed
     prev = seed
-    for i in range(period, len(closes)):
-        prev = (prev * (period - 1) + tr[i]) / period
+    decay = period - 1
+    for i in range(period, n):
+        prev = (prev * decay + tr[i]) / period
         out[i] = prev
     return out
 
@@ -283,44 +311,52 @@ def supertrend(
     if not (len(highs) == len(lows) == n):
         raise ValueError("highs, lows and closes must be the same length")
 
-    atr_vals = atr(highs, lows, closes, period)
     line: list[Number | None] = [None] * n
     direction: list[int | None] = [None] * n
-    final_upper: list[Number | None] = [None] * n
-    final_lower: list[Number | None] = [None] * n
+    if n < period:
+        return line, direction
 
-    for i in range(n):
+    atr_vals = atr(highs, lows, closes, period)
+    # The bands are a pure carry-forward from the previous bar, so hold them in scalars
+    # rather than materialising two more full-length lists.
+    prev_upper = 0.0
+    prev_lower = 0.0
+    prev_dir: int | None = None
+
+    # ATR — and therefore the whole indicator — is first defined at index period - 1.
+    for i in range(period - 1, n):
         a = atr_vals[i]
-        if a is None:
-            continue
         hl2 = (highs[i] + lows[i]) / 2
         basic_upper = hl2 + multiplier * a
         basic_lower = hl2 - multiplier * a
 
-        if direction[i - 1] is None:
+        if prev_dir is None:
             # First bar with a defined ATR: seed the bands and assume an uptrend.
             # The seed is arbitrary, hence the strategy's extra warm-up bar.
-            final_upper[i] = basic_upper
-            final_lower[i] = basic_lower
+            prev_upper = basic_upper
+            prev_lower = basic_lower
+            prev_dir = 1
             direction[i] = 1
-            line[i] = final_lower[i]
+            line[i] = basic_lower
             continue
 
-        prev_upper = final_upper[i - 1]
-        prev_lower = final_lower[i - 1]
         prev_close = closes[i - 1]
-        final_upper[i] = (
+        upper = (
             basic_upper if basic_upper < prev_upper or prev_close > prev_upper else prev_upper
         )
-        final_lower[i] = (
+        lower = (
             basic_lower if basic_lower > prev_lower or prev_close < prev_lower else prev_lower
         )
 
-        if direction[i - 1] == 1:
-            direction[i] = -1 if closes[i] < final_lower[i] else 1
+        if prev_dir == 1:
+            now = -1 if closes[i] < lower else 1
         else:
-            direction[i] = 1 if closes[i] > final_upper[i] else -1
-        line[i] = final_lower[i] if direction[i] == 1 else final_upper[i]
+            now = 1 if closes[i] > upper else -1
+        direction[i] = now
+        line[i] = lower if now == 1 else upper
+        prev_upper = upper
+        prev_lower = lower
+        prev_dir = now
 
     return line, direction
 
@@ -347,14 +383,43 @@ def adx(
     if n < 2 * period:
         return out
 
-    tr = true_range(highs, lows, closes)
-    plus_dm = [0.0] * n
-    minus_dm = [0.0] * n
+    # True range, both directional-movement legs, DX and the ADX average are all
+    # produced and consumed in strict index order, so this runs as one streaming pass
+    # over the bars — no full-length intermediate lists, and each bar is touched once.
+    #
+    # Wilder's smoothing is seeded from plain sums over the first `period` movement
+    # bars; only those short seed windows are buffered. They are added with sum()
+    # rather than a hand-rolled running total because sum() compensates float error,
+    # and an ULP of drift here is enough to move a signal.
+    seed_tr: list[float] = []
+    seed_pdm: list[float] = []
+    seed_mdm: list[float] = []
+    dx_seed: list[float] = []
+    smooth_tr = 0.0
+    smooth_pdm = 0.0
+    smooth_mdm = 0.0
+    prev = 0.0
+    prev_high = highs[0]
+    prev_low = lows[0]
+    ready = 2 * period
+    decay = period - 1
+
     for i in range(1, n):
-        up = highs[i] - highs[i - 1]
-        down = lows[i - 1] - lows[i]
+        high = highs[i]
+        low = lows[i]
+        prev_close = closes[i - 1]
+        # True range, as in true_range() above: max(h, pc) - min(l, pc).
+        hi = high if high > prev_close else prev_close
+        lo = low if low < prev_close else prev_close
+        tr = hi - lo
+
+        up = high - prev_high
+        down = prev_low - low
+        prev_high = high
+        prev_low = low
         if up > down and up > 0:
-            plus_dm[i] = up
+            plus_dm = up
+            minus_dm = 0.0
         elif down > up and down > 0:
             minus_dm[i] = down
 
@@ -386,12 +451,26 @@ def adx(
         diff = plus_di - minus_di
         dx[i] = 100.0 * (diff if diff >= 0.0 else -diff) / total
 
-    seed = sum(dx[period : 2 * period]) / period
-    out[2 * period - 1] = seed
-    prev = seed
-    for i in range(2 * period, n):
-        prev = (prev * (period - 1) + dx[i]) / period
-        out[i] = prev
+        if smooth_tr == 0:
+            dx = 0.0
+        else:
+            plus_di = 100.0 * smooth_pdm / smooth_tr
+            minus_di = 100.0 * smooth_mdm / smooth_tr
+            total = plus_di + minus_di
+            if total == 0:
+                dx = 0.0
+            else:
+                gap = plus_di - minus_di
+                dx = 100.0 * (gap if gap >= 0.0 else -gap) / total
+
+        if i < ready:
+            dx_seed.append(dx)
+            if i == ready - 1:
+                prev = sum(dx_seed) / period
+                out[i] = prev
+        else:
+            prev = (prev * decay + dx) / period
+            out[i] = prev
     return out
 
 

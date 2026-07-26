@@ -47,11 +47,10 @@ class ReplayExchange(ExchangeAdapter):
     def __init__(self, candles_by_symbol: dict[str, list[Candle]]) -> None:
         self._data = candles_by_symbol
         self.cursor = 0  # index of the "current" bar
-        # The series are fixed for the whole replay, so compute the bar count once
-        # rather than re-scanning every symbol on each advance().
-        self._total_bars = (
-            min(len(c) for c in candles_by_symbol.values()) if candles_by_symbol else 0
-        )
+        # History is fixed for the life of a replay, so measure it once instead of on
+        # every advance()/current_timestamp() — those run per bar, per backtest.
+        self._total_bars = min((len(c) for c in self._data.values()), default=0)
+        self._clock = next(iter(self._data.values()), [])
 
     @property
     def total_bars(self) -> int:
@@ -59,14 +58,13 @@ class ReplayExchange(ExchangeAdapter):
 
     def advance(self) -> bool:
         """Move to the next bar; False once history is exhausted."""
-        if self.cursor + 1 >= self.total_bars:
+        if self.cursor + 1 >= self._total_bars:
             return False
         self.cursor += 1
         return True
 
     def current_timestamp(self) -> int:
-        first = next(iter(self._data.values()))
-        return first[self.cursor].timestamp
+        return self._clock[self.cursor].timestamp
 
     def load_markets(self) -> dict:
         return {}

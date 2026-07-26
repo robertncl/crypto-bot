@@ -40,8 +40,12 @@ class Breakout(Strategy):
         if len(candles) < self.warmup:
             return HOLD
 
-        highs = [c.high for c in candles]
-        lows = [c.low for c in candles]
+        # The channel is a rolling extreme, so it depends only on the `lookback` bars
+        # ending on the previous one — feed the indicators exactly that slice instead of
+        # the engine's whole (~200-bar) buffer. Identical values, a fraction of the work.
+        window = candles[-(self.lookback + 1) :]
+        highs = [c.high for c in window]
+        lows = [c.low for c in window]
         close = candles[-1].close
 
         # `[-2]` is the channel as of the previous bar, so the current bar is excluded.
