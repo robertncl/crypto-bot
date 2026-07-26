@@ -35,3 +35,19 @@ def test_hold_before_warmup(make_candles):
 def test_rejects_nonpositive_lookback():
     with pytest.raises(ValueError):
         Breakout({"lookback": 0})
+
+
+def test_signal_ignores_history_beyond_the_channel(make_candles):
+    # The strategy feeds the indicators only the `lookback + 1` bars the Donchian
+    # channel actually depends on, rather than the engine's whole ~200-bar buffer.
+    # That is only safe because older bars cannot change the signal — pin it.
+    import random
+
+    rng = random.Random(4)
+    strategy = Breakout(PARAMS)
+    for _ in range(200):
+        recent = [rng.uniform(1, 20) for _ in range(strategy.warmup)]
+        older = [rng.uniform(1, 20) for _ in range(150)]
+        minimal = strategy.generate(make_candles(recent))
+        padded = strategy.generate(make_candles(older + recent))
+        assert (minimal.type, minimal.reason) == (padded.type, padded.reason)

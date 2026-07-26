@@ -165,7 +165,11 @@ class Engine:
             )
             self._submit(request)
 
-        self.log.info("cycle complete | %s", self.portfolio.snapshot(self._last_prices))
+        # snapshot() walks every position and rounds a dict of dicts; logging would
+        # discard that work whenever INFO is off (backtests silence the engine), so
+        # don't do it in the first place.
+        if self.log.isEnabledFor(logging.INFO):
+            self.log.info("cycle complete | %s", self.portfolio.snapshot(self._last_prices))
 
     # -- helpers ---------------------------------------------------------------
     def _close_position(self, symbol: str, reason: str) -> None:

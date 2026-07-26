@@ -45,7 +45,10 @@ class BollingerReversion(Strategy):
         if len(candles) < self.warmup:
             return HOLD
 
-        closes = [c.close for c in candles]
+        # The bands over a trailing `period` window carry no state from earlier bars, so
+        # the two bars compared below need only `period + 1` closes — no need to run the
+        # SMA and rolling stddev across the engine's whole (~200-bar) buffer.
+        closes = [c.close for c in candles[-(self.period + 1) :]]
         lower, _middle, upper = bollinger_bands(closes, self.period, self.num_std)
         if None in (lower[-1], lower[-2], upper[-1], upper[-2]):
             return HOLD

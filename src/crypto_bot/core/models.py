@@ -35,9 +35,14 @@ class SignalType(str, Enum):
     HOLD = "hold"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Candle:
-    """A single OHLCV bar. ``timestamp`` is epoch milliseconds (ccxt convention)."""
+    """A single OHLCV bar. ``timestamp`` is epoch milliseconds (ccxt convention).
+
+    Slotted: a backtest holds hundreds of thousands of these and strategies read their
+    fields in tight loops, so dropping the per-instance ``__dict__`` cuts both memory
+    and attribute-access cost.
+    """
 
     timestamp: int
     open: float
