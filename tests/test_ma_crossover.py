@@ -35,3 +35,23 @@ def test_hold_before_warmup(make_candles):
 def test_rejects_fast_ge_slow():
     with pytest.raises(ValueError):
         MACrossover({"fast_period": 5, "slow_period": 5})
+
+
+def test_hold_when_indicator_not_yet_defined(make_candles, monkeypatch):
+    # Both moving averages are provably defined for every input at exactly `warmup`
+    # candles (checked by brute force across params), so this guard can't be reached
+    # with well-formed data. Force it via the indicator call to prove it still holds
+    # if that invariant were ever violated.
+    import crypto_bot.strategies.ma_crossover as mod
+
+    monkeypatch.setattr(mod, "moving_average", lambda closes, period, kind: [None] * len(closes))
+    strategy = MACrossover(PARAMS)
+    candles = make_candles([10] * strategy.warmup)
+    assert strategy.generate(candles).type == SignalType.HOLD
+
+
+def test_rejects_nonpositive_periods():
+    with pytest.raises(ValueError):
+        MACrossover({"fast_period": 0, "slow_period": 4})
+    with pytest.raises(ValueError):
+        MACrossover({"fast_period": 4, "slow_period": 0})

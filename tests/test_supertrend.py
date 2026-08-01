@@ -40,3 +40,18 @@ def test_rejects_nonpositive_period():
 def test_rejects_nonpositive_multiplier():
     with pytest.raises(ValueError):
         Supertrend({"period": 3, "multiplier": 0})
+
+
+def test_hold_when_direction_not_yet_defined(make_candles, monkeypatch):
+    # supertrend()'s direction is provably defined at both compared bars for every
+    # input at exactly `warmup` candles, so this guard is unreachable with well-formed
+    # data. Force it via the indicator call to prove it still holds if that ever changed.
+    import crypto_bot.strategies.supertrend as mod
+
+    def _fake_supertrend(highs, lows, closes, period, multiplier):
+        return [None] * len(closes), [None] * len(closes)
+
+    monkeypatch.setattr(mod, "supertrend", _fake_supertrend)
+    strategy = Supertrend(PARAMS)
+    candles = make_candles([100] * strategy.warmup)
+    assert strategy.generate(candles).type == SignalType.HOLD

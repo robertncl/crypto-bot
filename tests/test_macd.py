@@ -45,3 +45,16 @@ def test_rejects_fast_ge_slow():
 def test_rejects_nonpositive_signal():
     with pytest.raises(ValueError):
         MACDMomentum({"fast_period": 3, "slow_period": 6, "signal_period": 0})
+
+
+def test_hold_when_indicator_not_yet_defined(monkeypatch):
+    # macd()'s line/signal are provably defined at both compared bars for every input
+    # at exactly `warmup` candles, so this guard is unreachable with well-formed data.
+    # Force it via the indicator call to prove it still holds if that ever changed.
+    import crypto_bot.strategies.macd as mod
+    from crypto_bot.core.models import Candle
+
+    monkeypatch.setattr(mod, "macd", lambda *a, **k: ([None] * 20, [None] * 20, [None] * 20))
+    strategy = MACDMomentum(PARAMS)
+    candles = [Candle(1_000_000 + i * 60_000, 10, 10, 10, 10, 1.0) for i in range(strategy.warmup)]
+    assert strategy.generate(candles).type == SignalType.HOLD

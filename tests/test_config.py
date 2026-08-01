@@ -116,3 +116,75 @@ def test_perp_symbols_pass_the_quote_currency_check(tmp_path):
     raw = VALID.replace("  - BTC/USDT\n", "  - BTC/USDT:USDT\n")
     cfg = load_config(_write(tmp_path, raw))
     assert "BTC/USDT:USDT" in cfg.symbols
+
+
+def test_invalid_yaml_syntax_is_a_config_error(tmp_path):
+    with pytest.raises(ConfigError, match="could not parse YAML"):
+        load_config(_write(tmp_path, "mode: paper\n  bad: [unterminated"))
+
+
+def test_non_mapping_root_is_a_config_error(tmp_path):
+    with pytest.raises(ConfigError, match="config root must be a mapping"):
+        load_config(_write(tmp_path, "- just\n- a\n- list\n"))
+
+
+def test_empty_symbols_list_is_rejected(tmp_path):
+    raw = VALID.replace("  - BTC/USDT\n  - ETH/USDT\n", "")
+    with pytest.raises(ConfigError, match="symbols"):
+        load_config(_write(tmp_path, raw))
+
+
+def test_nonpositive_poll_seconds_is_rejected(tmp_path):
+    raw = VALID.replace("poll_seconds: 30", "poll_seconds: 0")
+    with pytest.raises(ConfigError, match="poll_seconds"):
+        load_config(_write(tmp_path, raw))
+
+
+def test_max_open_positions_below_one_is_rejected(tmp_path):
+    raw = VALID + "\nrisk:\n  max_open_positions: 0\n"
+    with pytest.raises(ConfigError, match="max_open_positions"):
+        load_config(_write(tmp_path, raw))
+
+
+def test_negative_risk_field_is_rejected(tmp_path):
+    raw = VALID + "\nrisk:\n  stop_loss_pct: -0.1\n"
+    with pytest.raises(ConfigError, match="stop_loss_pct"):
+        load_config(_write(tmp_path, raw))
+
+
+def test_max_position_pct_above_one_is_rejected(tmp_path):
+    raw = VALID + "\nrisk:\n  max_position_pct: 1.5\n"
+    with pytest.raises(ConfigError, match="max_position_pct"):
+        load_config(_write(tmp_path, raw))
+
+
+def test_nonpositive_starting_cash_is_rejected(tmp_path):
+    raw = VALID + "\npaper:\n  starting_cash: 0\n"
+    with pytest.raises(ConfigError, match="starting_cash"):
+        load_config(_write(tmp_path, raw))
+
+
+def test_negative_fee_or_slippage_is_rejected(tmp_path):
+    raw = VALID + "\npaper:\n  fee_rate: -0.001\n"
+    with pytest.raises(ConfigError, match="fee_rate"):
+        load_config(_write(tmp_path, raw))
+
+
+def test_invalid_logging_level_is_rejected(tmp_path):
+    raw = VALID.replace("level: DEBUG", "level: NOT_A_LEVEL")
+    with pytest.raises(ConfigError, match="logging.level"):
+        load_config(_write(tmp_path, raw))
+
+
+def test_missing_required_exchange_name_is_rejected(tmp_path):
+    raw = VALID.replace("  name: binance\n", "")
+    with pytest.raises(ConfigError, match="missing required config"):
+        load_config(_write(tmp_path, raw))
+
+
+def test_non_mapping_exchange_section_is_rejected(tmp_path):
+    raw = VALID.replace(
+        "exchange:\n  name: binance\n  sandbox: false\n", "exchange: not-a-mapping\n"
+    )
+    with pytest.raises(ConfigError, match="exchange.*mapping"):
+        load_config(_write(tmp_path, raw))

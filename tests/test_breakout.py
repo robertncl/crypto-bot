@@ -51,3 +51,16 @@ def test_signal_ignores_history_beyond_the_channel(make_candles):
         minimal = strategy.generate(make_candles(recent))
         padded = strategy.generate(make_candles(older + recent))
         assert (minimal.type, minimal.reason) == (padded.type, padded.reason)
+
+
+def test_hold_when_channel_not_yet_defined(make_candles, monkeypatch):
+    # highest()/lowest() are provably defined at the compared bar for every input at
+    # exactly `warmup` candles, so this guard is unreachable with well-formed data.
+    # Force it via the indicator calls to prove it still holds if that ever changed.
+    import crypto_bot.strategies.breakout as mod
+
+    monkeypatch.setattr(mod, "highest", lambda values, period: [None] * len(values))
+    monkeypatch.setattr(mod, "lowest", lambda values, period: [None] * len(values))
+    strategy = Breakout(PARAMS)
+    candles = make_candles([10] * strategy.warmup)
+    assert strategy.generate(candles).type == SignalType.HOLD

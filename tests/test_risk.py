@@ -110,3 +110,33 @@ def test_kill_switch_disabled_when_zero():
     rm = _rm(max_drawdown_pct=0.0)
     rm.update_equity(1000.0)
     assert not rm.is_halted(1.0)
+
+
+def test_peak_equity_property():
+    risk = RiskManager(RiskConfig())
+    assert risk.peak_equity == 0.0
+    risk.update_equity(1000.0)
+    assert risk.peak_equity == 1000.0
+
+
+def test_drawdown_is_zero_before_any_equity_recorded():
+    risk = RiskManager(RiskConfig())
+    assert risk.drawdown(500.0) == 0.0
+
+
+def test_size_entry_rejects_invalid_price():
+    risk = RiskManager(RiskConfig())
+    decision = risk.size_entry(
+        equity=1000.0, price=0.0, open_positions=0, has_position=False
+    )
+    assert not decision.approved
+    assert "invalid price" in decision.reason
+
+
+def test_size_entry_rejected_when_notional_rounds_to_zero():
+    risk = RiskManager(RiskConfig(position_pct=0.1))
+    decision = risk.size_entry(
+        equity=0.0, price=100.0, open_positions=0, has_position=False
+    )
+    assert not decision.approved
+    assert "rounds to zero" in decision.reason

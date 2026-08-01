@@ -200,3 +200,18 @@ def test_sizing_is_direction_agnostic():
     )
     assert long_side.amount == short_side.amount == 2.0
     assert "short" in short_side.reason
+
+
+def test_partial_cover_leaves_the_rest_of_the_short_open():
+    pf = Portfolio(cash=1000.0, allow_shorts=True)
+    pf.apply_fill(_fill("BTC/USDT", OrderSide.SELL, 2.0, 100.0))  # short 2 @ 100
+    assert pf.cash == pytest.approx(800.0)
+
+    pf.apply_fill(_fill("BTC/USDT", OrderSide.BUY, 1.0, 90.0))  # cover half, price fell
+
+    pos = pf.positions["BTC/USDT"]
+    assert pos.is_short
+    assert pos.amount == pytest.approx(1.0)
+    assert pos.entry_price == pytest.approx(100.0)
+    assert pf.realized_pnl == pytest.approx(10.0)  # a short gains as price falls
+    assert pf.cash == pytest.approx(910.0)

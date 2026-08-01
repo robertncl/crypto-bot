@@ -76,3 +76,9 @@ def test_rejects_invalid_params():
         FundingBias({"enter_apr": 0})
     with pytest.raises(ValueError):
         FundingBias({"trend_period": -1})
+
+
+def test_hold_before_warmup(make_candles):
+    strat = FundingBias({"trend_period": 10})
+    short = make_candles(_flat(5))  # fewer than warmup (10) candles
+    assert strat.generate(short, "BTC/USDT", _ctx(0.001)).type == SignalType.HOLD

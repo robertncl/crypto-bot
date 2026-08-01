@@ -421,35 +421,25 @@ def adx(
             plus_dm = up
             minus_dm = 0.0
         elif down > up and down > 0:
-            minus_dm[i] = down
+            plus_dm = 0.0
+            minus_dm = down
+        else:
+            plus_dm = 0.0
+            minus_dm = 0.0
 
-    # Wilder smoothing, seeded with plain sums over the first `period` movement bars.
-    # DX is inlined below (rather than a per-bar helper call) because this is the
-    # innermost loop of the regime strategy's per-bar ADX; the arithmetic is unchanged.
-    smooth_tr = sum(tr[1 : period + 1])
-    smooth_pdm = sum(plus_dm[1 : period + 1])
-    smooth_mdm = sum(minus_dm[1 : period + 1])
-    dx = [0.0] * n
-    if smooth_tr != 0:
-        plus_di = 100.0 * smooth_pdm / smooth_tr
-        minus_di = 100.0 * smooth_mdm / smooth_tr
-        total = plus_di + minus_di
-        if total != 0:
-            diff = plus_di - minus_di
-            dx[period] = 100.0 * (diff if diff >= 0.0 else -diff) / total
-    for i in range(period + 1, n):
-        smooth_tr += tr[i] - smooth_tr / period
-        smooth_pdm += plus_dm[i] - smooth_pdm / period
-        smooth_mdm += minus_dm[i] - smooth_mdm / period
-        if smooth_tr == 0:
-            continue  # dx[i] already 0.0
-        plus_di = 100.0 * smooth_pdm / smooth_tr
-        minus_di = 100.0 * smooth_mdm / smooth_tr
-        total = plus_di + minus_di
-        if total == 0:
-            continue  # dx[i] already 0.0
-        diff = plus_di - minus_di
-        dx[i] = 100.0 * (diff if diff >= 0.0 else -diff) / total
+        if i <= period:
+            seed_tr.append(tr)
+            seed_pdm.append(plus_dm)
+            seed_mdm.append(minus_dm)
+            if i < period:
+                continue
+            smooth_tr = sum(seed_tr)
+            smooth_pdm = sum(seed_pdm)
+            smooth_mdm = sum(seed_mdm)
+        else:
+            smooth_tr += tr - smooth_tr / period
+            smooth_pdm += plus_dm - smooth_pdm / period
+            smooth_mdm += minus_dm - smooth_mdm / period
 
         if smooth_tr == 0:
             dx = 0.0

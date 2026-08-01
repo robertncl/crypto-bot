@@ -233,3 +233,84 @@ def test_funding_falls_back_to_the_configured_rate():
     engine.run_once()
 
     assert engine.portfolio.funding_paid == pytest.approx(-1.0)  # 500 * 0.002, collected
+
+
+class ContextAwareSignal(Strategy):
+    """Records the MarketContext it was given, so _ask_strategy/_context_for can be
+    verified without depending on FundingBias's own trading logic."""
+
+    name = "context-aware"
+    wants_context = True
+
+    def __init__(self):
+        super().__init__({})
+        self.seen_context = None
+
+    @property
+    def warmup(self) -> int:
+        return 1
+
+    def generate(self, candles, symbol=None, context=None):
+        self.seen_context = context
+        return HOLD
+
+
+def test_ask_strategy_passes_market_context_to_strategies_that_want_it():
+    exchange = FakeExchange([10, 10, 10], funding=0.0002)
+    strategy = ContextAwareSignal()
+    engine = _engine(exchange, _config(funding_rate=0.0001), strategy)
+
+    engine.run_once()
+
+    assert strategy.seen_context is not None
+    assert strategy.seen_context.symbol == "BTC/USDT"
+    assert strategy.seen_context.funding_rate == pytest.approx(0.0002)  # from the exchange
+
+
+def test_context_for_falls_back_to_the_configured_rate_when_the_venue_has_none():
+    exchange = FakeExchange([10, 10, 10], funding=None)
+    strategy = ContextAwareSignal()
+    engine = _engine(exchange, _config(funding_rate=0.0003), strategy)
+
+    engine.run_once()
+
+    assert strategy.seen_context.funding_rate == pytest.approx(0.0003)
+
+
+def test_settle_funding_is_a_noop_with_no_candles():
+    engine = _engine(FakeExchange([10]), _config(), FixedSignal(SignalType.HOLD))
+    engine._settle_funding({})  # must not raise, must not touch the funding clock
+    assert engine._last_funding_ts is None
+
+
+def test_settle_funding_is_a_noop_when_the_interval_is_nonpositive():
+    engine = _engine(FakeExchange([10]), _config(funding_hours=0.0), FixedSignal(SignalType.HOLD))
+    engine._settle_funding({"BTC/USDT": [Candle(1_000, 10, 10, 10, 10, 1.0)]})
+    assert engine._last_funding_ts is None
+
+
+def test_delta_neutral_book_settles_exactly_zero_net_funding():
+    # A long and a short of equal notional at the same rate cancel out: the long's
+    # payment is the short's receipt. Nothing should move, and the engine must handle
+    # a zero settlement without logging a payment that never happened.
+    from crypto_bot.core.models import Position
+
+    exchange = FakeExchange([10, 10, 10], funding=0.001)
+    engine = _engine(
+        exchange, _config(funding_hours=1 / 60), FixedSignal(SignalType.HOLD)
+    )
+    engine.portfolio.positions["BTC/USDT"] = Position(
+        symbol="BTC/USDT", amount=10.0, entry_price=10.0, side=PositionSide.LONG
+    )
+    engine.portfolio.positions["ETH/USDT"] = Position(
+        symbol="ETH/USDT", amount=10.0, entry_price=10.0, side=PositionSide.SHORT
+    )
+
+    engine.run_once()  # first cycle only anchors the funding clock
+    cash_before = engine.portfolio.cash
+
+    exchange.set_closes([10, 10, 10, 10])  # one more bar => one interval elapsed
+    engine.run_once()
+
+    assert engine.portfolio.funding_paid == pytest.approx(0.0)
+    assert engine.portfolio.cash == pytest.approx(cash_before)
