@@ -235,3 +235,99 @@ def test_backtester_applies_trailing_stop():
 def test_backtester_rejects_insufficient_history():
     with pytest.raises(ValueError):
         Backtester(_config()).run({"BTC/USDT": _candles([1, 2, 3])})
+
+
+def test_sharpe_and_sortino_need_at_least_two_returns():
+    assert sharpe_ratio([0.05], 8760) == 0.0
+    assert sortino_ratio([0.05], 8760) == 0.0
+    assert sharpe_ratio([], 8760) == 0.0
+    assert sortino_ratio([], 8760) == 0.0
+
+
+def test_cagr_is_zero_for_a_degenerate_span():
+    assert cagr(0.0, 100.0, 1000) == 0.0  # non-positive start
+    assert cagr(100.0, 0.0, 1000) == 0.0  # non-positive end
+    assert cagr(100.0, 110.0, 0) == 0.0  # zero elapsed time
+    assert cagr(100.0, 110.0, -1) == 0.0  # negative elapsed time
+
+
+def test_trades_from_orders_skips_unfilled_and_zero_fill_orders():
+    orders = [
+        _order(OrderSide.BUY, 1.0, 100.0),
+        Order(
+            symbol="BTC/USDT", side=OrderSide.SELL, amount=1.0, type=OrderType.MARKET,
+            status=OrderStatus.REJECTED, filled=0.0, average_price=None,
+        ),
+        _order(OrderSide.SELL, 1.0, 110.0),
+    ]
+    trades = trades_from_orders(orders)
+    assert len(trades) == 1
+    assert trades[0].pnl == pytest.approx(10.0)
+
+
+def test_trades_from_orders_ignores_a_sell_with_no_tracked_lot():
+    # A sell for a symbol never bought (shouldn't happen in a real backtest, but the
+    # pairing logic must not misattribute it to some other symbol's lot).
+    orders = [_order(OrderSide.SELL, 1.0, 100.0)]
+    assert trades_from_orders(orders) == []
+
+
+def test_backtester_rejects_empty_candle_data():
+    with pytest.raises(ValueError, match="no candle data supplied"):
+        Backtester(_config()).run({})
+
+
+def test_fetch_history_stops_when_the_exchange_returns_no_batch():
+    class _EmptyExchange:
+        def fetch_candles(self, symbol, timeframe, limit=200, since=None):
+            return []
+
+    out = fetch_history(_EmptyExchange(), "BTC/USDT", "1h", 1_700_000_000_000)
+    assert out == []
+
+
+def test_fetch_history_stops_on_a_stale_repeated_page():
+    class _StaleExchange:
+        def __init__(self, candles):
+            self._candles = candles
+
+        def fetch_candles(self, symbol, timeframe, limit=200, since=None):
+            # Always echoes the very first page, regardless of `since` — simulates a
+            # venue that ignores pagination and would otherwise loop forever. The page
+            # is exactly `limit` long so the first call doesn't already stop via the
+            # "short page" branch, and the second call's candles are then all stale.
+            return self._candles[: limit]
+
+    history = _candles(list(range(10)))
+    out = fetch_history(
+        _StaleExchange(history), "BTC/USDT", "1h", history[0].timestamp, page_size=2
+    )
+    assert [c.timestamp for c in out] == [c.timestamp for c in history[:2]]
+
+
+def test_fetch_history_truncates_at_until_ms():
+    history = _candles(list(range(10)))
+    exchange = _PagedExchange(history)
+    until_ms = history[4].timestamp
+    out = fetch_history(
+        exchange, "BTC/USDT", "1h", history[0].timestamp, until_ms=until_ms, page_size=3
+    )
+    assert [c.timestamp for c in out] == [c.timestamp for c in history[:5]]
+    assert out[-1].timestamp <= until_ms
+
+
+def test_replay_exchange_stub_methods():
+    from crypto_bot.backtest.engine import ReplayExchange
+    from crypto_bot.core.models import OrderRequest, OrderSide
+
+    replay = ReplayExchange({"BTC/USDT": _candles([1, 2, 3])})
+    assert replay.load_markets() == {}
+    assert replay.fetch_balance() == {}
+    assert replay.fetch_last_price("BTC/USDT") == 1.0  # cursor starts at 0
+
+    replay.cancel_order("id", "BTC/USDT")  # a no-op; must not raise
+
+    with pytest.raises(NotImplementedError):
+        replay.create_order(
+            OrderRequest(symbol="BTC/USDT", side=OrderSide.BUY, amount=1.0)
+        )

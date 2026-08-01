@@ -189,3 +189,50 @@ def test_adx_validates_inputs():
         adx([1, 2], [1, 2], [1, 2], period=0)
     with pytest.raises(ValueError):
         adx([1, 2, 3], [1, 2], [1, 2, 3], period=2)  # mismatched lengths
+
+
+def test_bollinger_bands_period_validation():
+    with pytest.raises(ValueError):
+        bollinger_bands([1, 2, 3], 0)
+
+
+def test_macd_rejects_nonpositive_periods():
+    with pytest.raises(ValueError):
+        macd([1, 2, 3], fast=0, slow=5, signal=3)
+    with pytest.raises(ValueError):
+        macd([1, 2, 3], fast=2, slow=0, signal=3)
+    with pytest.raises(ValueError):
+        macd([1, 2, 3], fast=2, slow=5, signal=0)
+
+
+def test_macd_short_input_returns_all_none():
+    # Fewer closes than the slow period: nothing can be defined yet.
+    macd_line, signal_line, hist = macd([1, 2, 3], fast=2, slow=5, signal=2)
+    assert macd_line == [None, None, None]
+    assert signal_line == [None, None, None]
+    assert hist == [None, None, None]
+
+
+def test_true_range_rejects_mismatched_lengths():
+    with pytest.raises(ValueError):
+        true_range([1, 2], [1, 2, 3], [1, 2])
+
+
+def test_atr_period_validation():
+    with pytest.raises(ValueError):
+        atr([1, 2], [1, 2], [1, 2], period=0)
+
+
+def test_atr_short_input_returns_all_none():
+    assert atr([1, 2], [1, 2], [1, 2], period=5) == [None, None]
+
+
+def test_supertrend_rejects_mismatched_lengths():
+    with pytest.raises(ValueError):
+        supertrend([1, 2, 3], [1, 2], [1, 2, 3], period=1)
+
+
+def test_supertrend_short_input_returns_all_none():
+    line, direction = supertrend([1, 2], [1, 2], [1, 2], period=5)
+    assert line == [None, None]
+    assert direction == [None, None]

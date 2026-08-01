@@ -60,3 +60,71 @@ def test_oversell_raises():
     pf.apply_fill(_fill("BTC/USDT", OrderSide.BUY, 1.0, 100.0))
     with pytest.raises(ValueError):
         pf.apply_fill(_fill("BTC/USDT", OrderSide.SELL, 2.0, 100.0))
+
+
+def test_equity_falls_back_to_entry_price_when_no_market_price_given():
+    p = Portfolio(cash=500.0)
+    p.apply_fill(_fill("BTC/USDT", OrderSide.BUY, 1.0, 100.0))
+    # No price supplied for BTC/USDT: equity() should mark it at its entry price.
+    assert p.equity({}) == pytest.approx(500.0 - 100.0 + 100.0)
+
+
+def test_apply_fill_ignores_an_unfilled_order():
+    p = Portfolio(cash=1000.0)
+    unfilled = Order(
+        symbol="BTC/USDT", side=OrderSide.BUY, amount=1.0, type=OrderType.MARKET,
+        status=OrderStatus.REJECTED, filled=0.0, average_price=None,
+    )
+    p.apply_fill(unfilled)
+    assert p.cash == 1000.0
+    assert p.positions == {}
+
+
+def test_apply_funding_is_a_noop_when_the_symbol_has_no_matching_rate():
+    p = Portfolio(cash=1000.0)
+    p.apply_fill(_fill("BTC/USDT", OrderSide.BUY, 1.0, 100.0))
+    # ETH/USDT has no position; a rate for it should not affect anything.
+    net = p.apply_funding({"ETH/USDT": 0.001}, {"BTC/USDT": 100.0})
+    assert net == 0.0
+    assert p.cash == pytest.approx(900.0)
+    assert p.funding_paid == 0.0
+
+
+def test_snapshot_reports_cash_equity_and_open_positions():
+    p = Portfolio(cash=1000.0)
+    p.apply_fill(_fill("BTC/USDT", OrderSide.BUY, 1.0, 100.0))
+    snap = p.snapshot({"BTC/USDT": 110.0})
+    assert snap["cash"] == 900.0
+    assert snap["equity"] == pytest.approx(1010.0)
+    assert snap["open_positions"]["BTC/USDT"]["side"] == "long"
+    assert snap["open_positions"]["BTC/USDT"]["amount"] == 1.0
+    assert snap["open_positions"]["BTC/USDT"]["unrealized_pnl"] == pytest.approx(10.0)
+
+
+def test_snapshot_omits_closed_positions():
+    p = Portfolio(cash=1000.0)
+    p.apply_fill(_fill("BTC/USDT", OrderSide.BUY, 1.0, 100.0))
+    p.apply_fill(_fill("BTC/USDT", OrderSide.SELL, 1.0, 110.0))
+    snap = p.snapshot({})
+    assert snap["open_positions"] == {}
+
+
+def test_equity_skips_a_zero_amount_position_left_in_the_dict():
+    # Defensive: apply_fill always deletes a position once its amount hits ~0, but
+    # equity() shouldn't blow up (or double count) if one were left behind some other
+    # way.
+    from crypto_bot.core.models import Position
+
+    p = Portfolio(cash=1000.0)
+    p.positions["BTC/USDT"] = Position(symbol="BTC/USDT", amount=0.0, entry_price=100.0)
+    assert p.equity({"BTC/USDT": 200.0}) == 1000.0
+
+
+def test_apply_funding_skips_a_zero_amount_position_left_in_the_dict():
+    from crypto_bot.core.models import Position
+
+    p = Portfolio(cash=1000.0)
+    p.positions["BTC/USDT"] = Position(symbol="BTC/USDT", amount=0.0, entry_price=100.0)
+    net = p.apply_funding({"BTC/USDT": 0.001}, {"BTC/USDT": 100.0})
+    assert net == 0.0
+    assert p.cash == 1000.0

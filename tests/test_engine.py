@@ -14,7 +14,7 @@ from crypto_bot.config import (
 )
 from crypto_bot.core.broker import PaperBroker
 from crypto_bot.core.engine import Engine
-from crypto_bot.core.models import Candle, OrderRequest
+from crypto_bot.core.models import Candle, OrderRequest, OrderSide
 from crypto_bot.core.portfolio import Portfolio
 from crypto_bot.exchanges.base import ExchangeAdapter
 from crypto_bot.risk.manager import RiskManager
@@ -198,3 +198,145 @@ def test_engine_runs_a_registered_breakout_strategy():
     pos = engine.portfolio.positions["BTC/USDT"]
     assert pos.amount == 50.0  # 50% of 1000 equity at price 10
     assert pos.entry_price == 10.0
+
+
+def test_run_polls_until_stopped(monkeypatch):
+    exchange = FakeExchange([10, 9, 8, 7, 6, 5, 7, 10])
+    config = _config()
+    engine = _engine(exchange, config)
+
+    cycles = {"n": 0}
+    real_run_once = engine.run_once
+
+    def _run_once_then_stop():
+        cycles["n"] += 1
+        real_run_once()
+        if cycles["n"] >= 2:
+            engine.stop()
+
+    engine.run_once = _run_once_then_stop
+    monkeypatch.setattr("time.sleep", lambda seconds: None)
+
+    engine.run()
+
+    assert cycles["n"] == 2
+    assert engine._running is False
+
+
+def test_run_recovers_from_exchange_and_unexpected_errors(monkeypatch):
+    from crypto_bot.exchanges.base import ExchangeError
+
+    exchange = FakeExchange([10, 9, 8, 7, 6, 5, 7, 10])
+    config = _config()
+    engine = _engine(exchange, config)
+
+    calls = {"n": 0}
+
+    def _flaky_run_once():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ExchangeError("network hiccup")
+        if calls["n"] == 2:
+            raise RuntimeError("unexpected bug")
+        engine.stop()
+
+    engine.run_once = _flaky_run_once
+    monkeypatch.setattr("time.sleep", lambda seconds: None)
+
+    engine.run()  # must not raise despite two failed cycles
+
+    assert calls["n"] == 3
+
+
+def test_run_once_skips_a_symbol_with_no_candles():
+    class EmptyThenNormalExchange(FakeExchange):
+        def fetch_candles(self, symbol, timeframe, limit=200):
+            return []
+
+    exchange = EmptyThenNormalExchange([10, 9, 8, 7, 6, 5, 7, 10])
+    config = _config()
+    engine = _engine(exchange, config)
+
+    engine.run_once()  # must not raise
+
+    assert engine.portfolio.positions == {}
+    assert "BTC/USDT" not in engine._last_prices
+
+
+def test_submit_logs_and_returns_none_on_an_exchange_error():
+    from crypto_bot.exchanges.base import ExchangeError
+
+    exchange = FakeExchange([10, 9, 8, 7, 6, 5, 7, 10])
+    config = _config()
+    engine = _engine(exchange, config)
+
+    class BoomBroker:
+        def execute(self, request):
+            raise ExchangeError("rejected by venue")
+
+    engine.broker = BoomBroker()
+    order = engine._submit(OrderRequest(symbol="BTC/USDT", side=OrderSide.BUY, amount=1.0))
+    assert order is None
+
+
+def test_submit_warns_and_returns_the_order_when_not_filled():
+    from crypto_bot.core.models import Order, OrderStatus, OrderType
+
+    exchange = FakeExchange([10, 9, 8, 7, 6, 5, 7, 10])
+    config = _config()
+    engine = _engine(exchange, config)
+
+    class OpenOrderBroker:
+        def execute(self, request):
+            return Order(
+                symbol=request.symbol, side=OrderSide.BUY, amount=request.amount,
+                type=OrderType.MARKET, status=OrderStatus.OPEN, filled=0.0,
+            )
+
+    engine.broker = OpenOrderBroker()
+    order = engine._submit(OrderRequest(symbol="BTC/USDT", side=OrderSide.BUY, amount=1.0))
+    assert order is not None
+    assert not order.is_filled
+
+
+def test_submit_warns_and_returns_the_order_when_the_portfolio_rejects_the_fill():
+    exchange = FakeExchange([10, 9, 8, 7, 6, 5, 7, 10])
+    config = _config()
+    engine = _engine(exchange, config)
+    engine._last_prices["BTC/USDT"] = 10.0  # PaperBroker needs a price; skip run_once's signal
+
+    # Buying far more than cash can cover: apply_fill raises ValueError, which _submit
+    # must catch and surface as a warning rather than crash the cycle.
+    order = engine._submit(
+        OrderRequest(symbol="BTC/USDT", side=OrderSide.BUY, amount=1_000_000.0)
+    )
+    assert order is not None
+    assert order.is_filled  # the paper broker filled it; the portfolio rejected booking it
+    assert not engine.portfolio.has_position("BTC/USDT")
+
+
+def test_run_handles_keyboard_interrupt_and_logs_the_final_snapshot(monkeypatch):
+    exchange = FakeExchange([10, 9, 8, 7, 6, 5, 7, 10])
+    config = _config()
+    engine = _engine(exchange, config)
+
+    def _raise_ctrl_c():
+        raise KeyboardInterrupt
+
+    engine.run_once = _raise_ctrl_c
+    monkeypatch.setattr("time.sleep", lambda seconds: None)
+
+    engine.run()  # must not propagate KeyboardInterrupt
+
+    assert engine._running is False
+
+
+def test_run_once_logs_cycle_summary_when_info_enabled():
+    import logging
+
+    exchange = FakeExchange([10, 9, 8, 7, 6, 5, 7, 10])
+    config = _config()
+    engine = _engine(exchange, config)
+    engine.log.setLevel(logging.INFO)
+
+    engine.run_once()  # must not raise while building/logging the snapshot

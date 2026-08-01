@@ -81,3 +81,18 @@ def test_is_registered():
     from crypto_bot.strategies.registry import build_strategy
 
     assert isinstance(build_strategy("trend_ls", {}), TrendLongShort)
+
+
+def test_hold_when_channel_not_yet_defined(monkeypatch):
+    # highest()/lowest() are provably defined at the compared bar for every input at
+    # exactly `warmup` candles (same reasoning as breakout's own guard), so this branch
+    # is unreachable with well-formed data. Force it via the indicator calls to prove
+    # the guard still holds if that invariant were ever violated.
+    import crypto_bot.strategies.trend_ls as mod
+
+    monkeypatch.setattr(mod, "highest", lambda values, period: [None] * len(values))
+    monkeypatch.setattr(mod, "lowest", lambda values, period: [None] * len(values))
+    params = {"lookback": 5, "adx_period": 3, "adx_threshold": 0, "trend_period": 0}
+    strategy = TrendLongShort(params)
+    candles = _ohlc([float(i) for i in range(1, strategy.warmup + 1)])
+    assert strategy.generate(candles).type == SignalType.HOLD

@@ -54,3 +54,16 @@ def test_hold_before_warmup(make_candles):
 def test_rejects_nonpositive_every():
     with pytest.raises(ValueError):
         DCA({"every": 0})
+
+
+def test_hold_on_non_increasing_timestamps():
+    from crypto_bot.core.models import Candle
+    from crypto_bot.strategies.dca import DCA
+
+    dca = DCA({"every": 1})
+    # Same timestamp on both bars -> a zero interval, which can't place a schedule.
+    candles = [
+        Candle(1_000_000, 10, 10, 10, 10, 1.0),
+        Candle(1_000_000, 10, 10, 10, 10, 1.0),
+    ]
+    assert dca.generate(candles).type == SignalType.HOLD

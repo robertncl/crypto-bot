@@ -51,3 +51,18 @@ def test_signal_ignores_history_beyond_the_band_window(make_candles):
         minimal = strategy.generate(make_candles(recent))
         padded = strategy.generate(make_candles(older + recent))
         assert (minimal.type, minimal.reason) == (padded.type, padded.reason)
+
+
+def test_hold_when_bands_not_yet_defined(make_candles, monkeypatch):
+    # bollinger_bands() is provably defined at both compared bars for every input at
+    # exactly `warmup` candles, so this guard is unreachable with well-formed data.
+    # Force it via the indicator call to prove it still holds if that ever changed.
+    import crypto_bot.strategies.bollinger as mod
+
+    none_series = [None] * 10
+    monkeypatch.setattr(
+        mod, "bollinger_bands", lambda *a, **k: (none_series, none_series, none_series)
+    )
+    strategy = BollingerReversion(PARAMS)
+    candles = make_candles([10] * strategy.warmup)
+    assert strategy.generate(candles).type == SignalType.HOLD

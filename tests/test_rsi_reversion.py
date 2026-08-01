@@ -45,3 +45,15 @@ def test_rejects_inverted_thresholds():
 def test_rejects_nonpositive_period():
     with pytest.raises(ValueError):
         RSIReversion({"period": 0})
+
+
+def test_hold_when_indicator_not_yet_defined(make_candles, monkeypatch):
+    # rsi() is provably defined at both compared bars for every input at exactly
+    # `warmup` candles, so this guard is unreachable with well-formed data. Force it
+    # via the indicator call to prove it still holds if that ever changed.
+    import crypto_bot.strategies.rsi_reversion as mod
+
+    monkeypatch.setattr(mod, "rsi", lambda closes, period: [None] * len(closes))
+    strategy = RSIReversion(PARAMS)
+    candles = make_candles([10] * strategy.warmup)
+    assert strategy.generate(candles).type == SignalType.HOLD
