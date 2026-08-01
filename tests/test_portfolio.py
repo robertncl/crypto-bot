@@ -128,3 +128,21 @@ def test_apply_funding_skips_a_zero_amount_position_left_in_the_dict():
     net = p.apply_funding({"BTC/USDT": 0.001}, {"BTC/USDT": 100.0})
     assert net == 0.0
     assert p.cash == 1000.0
+
+
+def test_partial_sell_leaves_the_rest_of_the_position_open():
+    # Every other sell in these tests closes a position outright; this covers the
+    # partial-reduction path, where margin and PnL are released pro-rata and the
+    # remainder keeps its original entry price.
+    p = Portfolio(cash=1000.0)
+    p.apply_fill(_fill("BTC/USDT", OrderSide.BUY, 2.0, 100.0))
+    assert p.cash == pytest.approx(800.0)  # 200 posted as margin
+
+    p.apply_fill(_fill("BTC/USDT", OrderSide.SELL, 1.0, 110.0))
+
+    pos = p.positions["BTC/USDT"]
+    assert pos.amount == pytest.approx(1.0)  # half still held
+    assert pos.entry_price == pytest.approx(100.0)  # a partial close never re-averages
+    assert p.realized_pnl == pytest.approx(10.0)
+    assert p.cash == pytest.approx(910.0)  # 100 margin released + 10 profit
+    assert p.equity({"BTC/USDT": 110.0}) == pytest.approx(1020.0)

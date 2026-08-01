@@ -331,3 +331,45 @@ def test_replay_exchange_stub_methods():
         replay.create_order(
             OrderRequest(symbol="BTC/USDT", side=OrderSide.BUY, amount=1.0)
         )
+
+
+def test_max_drawdown_ignores_non_positive_equity():
+    # Peak never rises above zero, so there is no meaningful percentage drawdown to
+    # report (and no division by a non-positive peak).
+    assert max_drawdown([-5.0, -3.0, -10.0]) == 0.0
+    assert max_drawdown([0.0, 0.0]) == 0.0
+
+
+def test_recording_broker_does_not_record_an_unfilled_order():
+    from crypto_bot.backtest.engine import RecordingBroker
+    from crypto_bot.core.models import OrderRequest
+
+    class _RejectingBroker:
+        def execute(self, request):
+            return Order(
+                symbol=request.symbol, side=request.side, amount=request.amount,
+                type=OrderType.MARKET, status=OrderStatus.REJECTED, filled=0.0,
+            )
+
+    broker = RecordingBroker(_RejectingBroker(), lambda: 1_700_000_000_000)
+    order = broker.execute(OrderRequest(symbol="BTC/USDT", side=OrderSide.BUY, amount=1.0))
+
+    assert order.timestamp == 1_700_000_000_000  # still stamped in bar time
+    assert broker.orders == []  # but never counted as a trade
+
+
+def test_buy_and_hold_skips_a_symbol_with_a_non_positive_first_close():
+    # Buy-and-hold divides by each symbol's first post-warm-up close, so a symbol whose
+    # bar there is zero must drop out of the benchmark rather than blow it up.
+    warmup_bar = 13 - 1  # ma_crossover slow_period 12 + 1, minus one for the cursor
+    btc = [100.0] * 30
+    btc[warmup_bar] = 0.0
+    eth = [100.0] * 30
+    eth[-1] = 200.0  # a clean +100% over the tested window
+
+    result = Backtester(_config(symbols=["BTC/USDT", "ETH/USDT"])).run(
+        {"BTC/USDT": _candles(btc), "ETH/USDT": _candles(eth)}
+    )
+
+    # Only ETH contributes: +100%. Averaging BTC in would have halved this.
+    assert result.buy_hold_return_pct == pytest.approx(1.0)

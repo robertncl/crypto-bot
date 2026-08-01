@@ -287,3 +287,30 @@ def test_settle_funding_is_a_noop_when_the_interval_is_nonpositive():
     engine = _engine(FakeExchange([10]), _config(funding_hours=0.0), FixedSignal(SignalType.HOLD))
     engine._settle_funding({"BTC/USDT": [Candle(1_000, 10, 10, 10, 10, 1.0)]})
     assert engine._last_funding_ts is None
+
+
+def test_delta_neutral_book_settles_exactly_zero_net_funding():
+    # A long and a short of equal notional at the same rate cancel out: the long's
+    # payment is the short's receipt. Nothing should move, and the engine must handle
+    # a zero settlement without logging a payment that never happened.
+    from crypto_bot.core.models import Position
+
+    exchange = FakeExchange([10, 10, 10], funding=0.001)
+    engine = _engine(
+        exchange, _config(funding_hours=1 / 60), FixedSignal(SignalType.HOLD)
+    )
+    engine.portfolio.positions["BTC/USDT"] = Position(
+        symbol="BTC/USDT", amount=10.0, entry_price=10.0, side=PositionSide.LONG
+    )
+    engine.portfolio.positions["ETH/USDT"] = Position(
+        symbol="ETH/USDT", amount=10.0, entry_price=10.0, side=PositionSide.SHORT
+    )
+
+    engine.run_once()  # first cycle only anchors the funding clock
+    cash_before = engine.portfolio.cash
+
+    exchange.set_closes([10, 10, 10, 10])  # one more bar => one interval elapsed
+    engine.run_once()
+
+    assert engine.portfolio.funding_paid == pytest.approx(0.0)
+    assert engine.portfolio.cash == pytest.approx(cash_before)
