@@ -149,9 +149,9 @@ attrs==26.1.0 \
     # via
     #   aiohttp
     #   ccxt
-ccxt==4.5.67 \
-    --hash=sha256:6992227c5a8181b97fda1781957589c2da7881f6e812199e517c50d2ae569d51 \
-    --hash=sha256:9e893605a1c88e889b1e7d7d7d99499d92b6d65291a57f549d7aec4ddbd4350b
+ccxt==4.5.70 \
+    --hash=sha256:7e6989973979b630832ff99b8c831cc9429461cfcaebbf6569b483ef5627fc1f \
+    --hash=sha256:ddc3ddf4ae65d27962976e036b0b9e7803947e453699d39fcbcb696b8a348776
     # via -r requirements.in
 certifi==2026.6.17 \
     --hash=sha256:024c88eeec92ca068db80f02b8b07c9cef7b9fe261d1d535abfd5abd6f6af432 \
@@ -1291,7 +1291,7 @@ zlib-ng==1.0.0 \
     # via ccxt
 
 # The following packages are considered to be unsafe in a requirements file:
-setuptools==82.0.1 \
-    --hash=sha256:7d872682c5d01cfde07da7bccc7b65469d3dca203318515ada1de5eda35efbf9 \
-    --hash=sha256:a59e362652f08dcd477c78bb6e7bd9d80a7995bc73ce773050228a348ce2e5bb
+setuptools==83.0.0 \
+    --hash=sha256:025bccbbf0fa05b6192bc64ae1e7b16e001fd6d6d4d5de03c97b1c1ade523bef \
+    --hash=sha256:29b23c360f22f414dc7336bb39178cc7bcbf6021ed2733cde173f09dba19abb3
     # via ccxt
