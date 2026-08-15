@@ -149,9 +149,9 @@ attrs==26.1.0 \
     # via
     #   aiohttp
     #   ccxt
-ccxt==4.5.71 \
-    --hash=sha256:171f9dd4c9c915b5e8dadf2730ebd9c675b590c7f03b0e420841f03a5a2195f8 \
-    --hash=sha256:936d01e84c47f4a6ce711962881cef5b094a1d39d4574fd08e186bd10160cf8c
+ccxt==4.5.73 \
+    --hash=sha256:0698f915201f5c18f0c0b24cc5d062e06fab4d5f68109bd9899ea8f049c5cb61 \
+    --hash=sha256:a644b81adca7fdb49ee5a765002ea4371df3ba599877775d4dae369e00101b6f
     # via -r requirements.in
 certifi==2026.6.17 \
     --hash=sha256:024c88eeec92ca068db80f02b8b07c9cef7b9fe261d1d535abfd5abd6f6af432 \
