@@ -11,13 +11,13 @@ requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Robert Ngo" }]
 dependencies = [
-    "ccxt>=4.5.73",
+    "ccxt>=4.5.75",
     "PyYAML>=6.0.3",
-    "python-dotenv>=1.2.2",
+    "python-dotenv>=1.2.3",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=9.1.1", "ruff>=0.16.3"]
+dev = ["pytest>=9.1.1", "ruff>=0.16.4"]
 
 [project.scripts]
 crypto-bot = "crypto_bot.cli:main"
