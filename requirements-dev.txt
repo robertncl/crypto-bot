@@ -159,7 +159,7 @@ certifi==2026.6.17 \
     # via
     #   ccxt
     #   requests
-cffi==2.0.0 \
+cffi==2.1.1 \
     --hash=sha256:00bdf7acc5f795150faa6957054fbbca2439db2f775ce831222b66f192f03beb \
     --hash=sha256:07b271772c100085dd28b74fa0cd81c8fb1a3ba18b21e03d7c27f3436a10606b \
     --hash=sha256:087067fa8953339c723661eda6b54bc98c5625757ea62e95eb4898ad5e776e9f \
@@ -247,7 +247,7 @@ cffi==2.0.0 \
     # via
     #   ccxt
     #   cryptography
-charset-normalizer==3.4.7 \
+charset-normalizer==3.5.1 \
     --hash=sha256:007d05ec7321d12a40227aae9e2bc6dca73f3cb21058999a1df9e193555a9dcc \
     --hash=sha256:03853ed82eeebbce3c2abfdbc98c96dc205f32a79627688ac9a27370ea61a49c \
     --hash=sha256:07d9e39b01743c3717745f4c530a6349eadbfa043c7577eef86c502c15df2c67 \
@@ -616,7 +616,7 @@ frozenlist==1.8.0 \
     #   aiohttp
     #   aiosignal
     #   ccxt
-idna==3.18 \
+idna==3.19 \
     --hash=sha256:7f952cbe720b688055e3f87de14f5c3e5fdaa8bc3928985c4077ca689de849a2 \
     --hash=sha256:ffb385a7e039654cef1ab9ef32c6fafe283c0c0467bba1d9029738ce4a14a848
     # via
@@ -778,7 +778,7 @@ multidict==6.7.1 \
     #   aiohttp
     #   ccxt
     #   yarl
-orjson==3.11.9 \
+orjson==3.12.0 \
     --hash=sha256:011382e2a60fda9d46f1cdee31068cfc52ffe952b587d683ec0463002802a0f4 \
     --hash=sha256:03db380e3780fa0015ed776a90f20e8e20bb11dde13b216ce19e5718e3dfba62 \
     --hash=sha256:051b102c93b4f634e89f3866b07b9a9a98915ada541f4ec30f177067b2694979 \
