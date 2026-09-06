@@ -4,4 +4,4 @@
 #   pip-compile --generate-hashes --upgrade requirements-dev.in
 -r requirements.in
 pytest
-ruff
+ruff==0.16.6
