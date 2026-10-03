@@ -35,7 +35,7 @@ class FakeExchange(ExchangeAdapter):
     def load_markets(self) -> dict:
         return {}
 
-    def fetch_candles(self, symbol, timeframe, limit=200):
+    def fetch_candles(self, symbol, timeframe, limit=200, since=None):
         return list(self._candles)
 
     def fetch_last_price(self, symbol):
@@ -250,7 +250,7 @@ def test_run_recovers_from_exchange_and_unexpected_errors(monkeypatch):
 
 def test_run_once_skips_a_symbol_with_no_candles():
     class EmptyThenNormalExchange(FakeExchange):
-        def fetch_candles(self, symbol, timeframe, limit=200):
+        def fetch_candles(self, symbol, timeframe, limit=200, since=None):
             return []
 
     exchange = EmptyThenNormalExchange([10, 9, 8, 7, 6, 5, 7, 10])

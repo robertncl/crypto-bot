@@ -279,13 +279,13 @@ def test_context_for_falls_back_to_the_configured_rate_when_the_venue_has_none()
 
 def test_settle_funding_is_a_noop_with_no_candles():
     engine = _engine(FakeExchange([10]), _config(), FixedSignal(SignalType.HOLD))
-    engine._settle_funding({})  # must not raise, must not touch the funding clock
+    engine._settle_funding(None)  # no data this cycle: no-op, funding clock untouched
     assert engine._last_funding_ts is None
 
 
 def test_settle_funding_is_a_noop_when_the_interval_is_nonpositive():
     engine = _engine(FakeExchange([10]), _config(funding_hours=0.0), FixedSignal(SignalType.HOLD))
-    engine._settle_funding({"BTC/USDT": [Candle(1_000, 10, 10, 10, 10, 1.0)]})
+    engine._settle_funding(1_000)
     assert engine._last_funding_ts is None
 
 

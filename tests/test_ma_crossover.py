@@ -44,7 +44,11 @@ def test_hold_when_indicator_not_yet_defined(make_candles, monkeypatch):
     # if that invariant were ever violated.
     import crypto_bot.strategies.ma_crossover as mod
 
-    monkeypatch.setattr(mod, "moving_average", lambda closes, period, kind: [None] * len(closes))
+    class _NeverReady:
+        def update(self, _value):
+            return None
+
+    monkeypatch.setattr(mod, "moving_average", lambda period, kind: _NeverReady())
     strategy = MACrossover(PARAMS)
     candles = make_candles([10] * strategy.warmup)
     assert strategy.generate(candles).type == SignalType.HOLD

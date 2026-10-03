@@ -21,9 +21,9 @@ ATR period of 10 and a multiplier of 3.0; lower the multiplier for more (earlier
 
 from __future__ import annotations
 
-from crypto_bot.core.models import HOLD, Candle, MarketContext, Signal, SignalType
-from crypto_bot.indicators.stream import Supertrend as SupertrendIndicator
-from crypto_bot.strategies.base import Strategy, StrategyState
+from crypto_bot.core.models import HOLD, Candle, Signal, SignalType
+from crypto_bot.indicators.ta import supertrend
+from crypto_bot.strategies.base import Strategy
 
 
 class Supertrend(Strategy):
@@ -44,32 +44,27 @@ class Supertrend(Strategy):
         # evaluated direction bars after the seed to detect a flip without acting on it.
         return self.period + 2
 
-    def new_state(self, symbol: str | None = None) -> StrategyState:
-        return _SupertrendState(self)
+    def generate(self, candles: list[Candle], symbol: str | None = None) -> Signal:
+        if len(candles) < self.warmup:
+            return HOLD
 
+        highs = [c.high for c in candles]
+        lows = [c.low for c in candles]
+        closes = [c.close for c in candles]
+        _line, direction = supertrend(highs, lows, closes, self.period, self.multiplier)
 
-class _SupertrendState(StrategyState):
-    __slots__ = ("_s", "_st", "_prev", "_bars", "_up", "_down")
-
-    def __init__(self, strategy: Supertrend) -> None:
-        self._s = strategy
-        self._st = SupertrendIndicator(strategy.period, strategy.multiplier)
-        self._prev: int | None = None
-        self._bars = 0
-        label = f"Supertrend({strategy.period},{strategy.multiplier:g})"
-        self._up = Signal(SignalType.BUY, reason=f"{label} flipped up")
-        self._down = Signal(SignalType.SELL, reason=f"{label} flipped down")
-
-    def update(self, candle: Candle, context: MarketContext | None = None) -> Signal:
-        now = self._st.update(candle.high, candle.low, candle.close)
-        prev = self._prev
-        self._prev = now
-        self._bars += 1
-        if self._bars < self._s.warmup or now is None or prev is None:
+        now, prev = direction[-1], direction[-2]
+        if now is None or prev is None:
             return HOLD
 
         if prev == -1 and now == 1:
-            return self._up
+            return Signal(
+                SignalType.BUY,
+                reason=f"Supertrend({self.period},{self.multiplier:g}) flipped up",
+            )
         if prev == 1 and now == -1:
-            return self._down
+            return Signal(
+                SignalType.SELL,
+                reason=f"Supertrend({self.period},{self.multiplier:g}) flipped down",
+            )
         return HOLD

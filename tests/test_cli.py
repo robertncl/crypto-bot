@@ -1,6 +1,6 @@
 """CLI smoke tests, covering every subcommand.
 
-Network-touching pieces (fetch_history, build_exchange, build_engine) are patched at
+Network-touching pieces (fetch_history_many, build_exchange, build_engine) are patched at
 the point the CLI imports them, so these never hit ccxt or the network; the rest of
 each command (config loading, argument handling, printed output, exit codes) runs for
 real.
@@ -240,8 +240,8 @@ def test_backtest_command_runs_end_to_end(tmp_path, monkeypatch, capsys):
         "crypto_bot.exchanges.factory.build_exchange", lambda *a, **k: FakeExchange()
     )
     monkeypatch.setattr(
-        "crypto_bot.backtest.fetch_history",
-        lambda exchange, symbol, timeframe, since_ms, **k: _candles(30),
+        "crypto_bot.backtest.fetch_history_many",
+        lambda exchange, symbols, timeframe, since_ms, **k: {s: _candles(30) for s in symbols},
     )
     code = main(["backtest", "--config", _write(tmp_path), "--days", "5"])
     assert code == 0
@@ -265,8 +265,8 @@ def test_backtest_command_aborts_when_a_symbol_has_no_history(tmp_path, monkeypa
         "crypto_bot.exchanges.factory.build_exchange", lambda *a, **k: FakeExchange()
     )
     monkeypatch.setattr(
-        "crypto_bot.backtest.fetch_history",
-        lambda exchange, symbol, timeframe, since_ms, **k: [],
+        "crypto_bot.backtest.fetch_history_many",
+        lambda exchange, symbols, timeframe, since_ms, **k: {s: [] for s in symbols},
     )
     code = main(["backtest", "--config", _write(tmp_path)])
     assert code == 1
@@ -286,8 +286,8 @@ def test_backtest_command_forces_paper_mode_even_if_config_says_live(tmp_path, m
 
     monkeypatch.setattr("crypto_bot.exchanges.factory.build_exchange", fake_build_exchange)
     monkeypatch.setattr(
-        "crypto_bot.backtest.fetch_history",
-        lambda exchange, symbol, timeframe, since_ms, **k: _candles(30),
+        "crypto_bot.backtest.fetch_history_many",
+        lambda exchange, symbols, timeframe, since_ms, **k: {s: _candles(30) for s in symbols},
     )
     code = main(["backtest", "--config", _write(tmp_path, LIVE_CONFIG)])
     assert code == 0

@@ -28,8 +28,8 @@ Two things make this strategy actually accumulate rather than buy once:
 
 from __future__ import annotations
 
-from crypto_bot.core.models import HOLD, Candle, MarketContext, Signal, SignalType
-from crypto_bot.strategies.base import Strategy, StrategyState
+from crypto_bot.core.models import HOLD, Candle, Signal, SignalType
+from crypto_bot.strategies.base import Strategy
 
 
 class DCA(Strategy):
@@ -49,50 +49,23 @@ class DCA(Strategy):
         # Two candles so the bar interval can be inferred from their timestamps.
         return 2
 
-    def generate(
-        self,
-        candles: list[Candle],
-        symbol: str | None = None,
-        context: MarketContext | None = None,
-    ) -> Signal:
-        # Overridden (rather than replayed through a fresh state) so repeated calls on the
-        # same candles dedupe against the strategy-level memory, as a poller expects.
+    def generate(self, candles: list[Candle], symbol: str | None = None) -> Signal:
         if len(candles) < self.warmup:
             return HOLD
-        return self._decide(candles[-2].timestamp, candles[-1].timestamp, symbol)
 
-    def new_state(self, symbol: str | None = None) -> StrategyState:
-        return _DCAState(self, symbol)
-
-    def _decide(self, prev_ts: int, ts: int, symbol: str | None) -> Signal:
-        interval = ts - prev_ts
+        latest = candles[-1]
+        interval = latest.timestamp - candles[-2].timestamp
         if interval <= 0:
             return HOLD  # non-increasing timestamps: can't place the bar on the schedule
 
         # Anchor the schedule to the epoch so "every N bars" is deterministic and
-        # independent of how much history happens to have been seen.
-        bar_index = ts // interval
+        # independent of how many candles happen to be in the rolling window.
+        bar_index = latest.timestamp // interval
         if bar_index % self.every != 0:
             return HOLD
-        if self._last_buy_ts.get(symbol) == ts:
+        if self._last_buy_ts.get(symbol) == latest.timestamp:
             return HOLD  # already bought this symbol on this candle; don't re-fire across polls
 
-        self._last_buy_ts[symbol] = ts
+        self._last_buy_ts[symbol] = latest.timestamp
         cadence = "every candle" if self.every == 1 else f"every {self.every} candles"
         return Signal(SignalType.BUY, reason=f"DCA scheduled buy ({cadence})")
-
-
-class _DCAState(StrategyState):
-    __slots__ = ("_s", "_symbol", "_prev_ts")
-
-    def __init__(self, strategy: DCA, symbol: str | None) -> None:
-        self._s = strategy
-        self._symbol = symbol
-        self._prev_ts: int | None = None
-
-    def update(self, candle: Candle, context: MarketContext | None = None) -> Signal:
-        prev_ts = self._prev_ts
-        self._prev_ts = candle.timestamp
-        if prev_ts is None:
-            return HOLD
-        return self._s._decide(prev_ts, candle.timestamp, self._symbol)

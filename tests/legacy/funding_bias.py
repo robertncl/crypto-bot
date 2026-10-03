@@ -43,8 +43,8 @@ Two structural caveats worth stating plainly:
 from __future__ import annotations
 
 from crypto_bot.core.models import HOLD, Candle, MarketContext, Signal, SignalType
-from crypto_bot.indicators.stream import EMA
-from crypto_bot.strategies.base import Strategy, StrategyState
+from crypto_bot.indicators.ta import ema
+from crypto_bot.strategies.base import Strategy
 
 
 class FundingBias(Strategy):
@@ -66,33 +66,24 @@ class FundingBias(Strategy):
         # funding rate, not in price history.
         return max(self.trend_period, 1)
 
-    def new_state(self, symbol: str | None = None) -> StrategyState:
-        return _FundingBiasState(self)
-
-
-class _FundingBiasState(StrategyState):
-    __slots__ = ("_s", "_ema", "_bars")
-
-    def __init__(self, strategy: FundingBias) -> None:
-        self._s = strategy
-        # Trend reference price; None when the guard is disabled.
-        self._ema = EMA(strategy.trend_period) if strategy.trend_period > 0 else None
-        self._bars = 0
-
-    def update(self, candle: Candle, context: MarketContext | None = None) -> Signal:
-        trend = self._ema.update(candle.close) if self._ema is not None else None
-        self._bars += 1
-        s = self._s
-        if self._bars < s.warmup:
+    def generate(
+        self,
+        candles: list[Candle],
+        symbol: str | None = None,
+        context: MarketContext | None = None,
+    ) -> Signal:
+        if len(candles) < self.warmup:
             return HOLD
         if context is None or context.funding_rate is None:
             return HOLD  # spot market, or the venue exposes no funding rate
 
         apr = context.funding_apr
-        if apr is None or abs(apr) < s.enter_apr:
+        if apr is None or abs(apr) < self.enter_apr:
             return HOLD  # funding is unremarkable; no positioning edge to trade
 
-        close = candle.close
+        trend = self._trend(candles)
+        close = candles[-1].close
+
         if apr > 0:
             # Longs are crowded and paying. Fade them, unless price is in an uptrend the
             # trend guard says not to fight.
@@ -109,3 +100,10 @@ class _FundingBiasState(StrategyState):
             SignalType.BUY,
             reason=f"funding {apr:+.1%}/yr — crowded shorts paying longs",
         )
+
+    def _trend(self, candles: list[Candle]) -> float | None:
+        """Trend reference price, or None when the guard is disabled/undefined."""
+        if self.trend_period <= 0:
+            return None
+        closes = [c.close for c in candles]
+        return ema(closes, self.trend_period)[-1]

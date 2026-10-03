@@ -7,9 +7,9 @@ on every bar the fast MA stays above/below the slow MA.
 
 from __future__ import annotations
 
-from crypto_bot.core.models import HOLD, Candle, Signal, SignalType
-from crypto_bot.indicators.ta import moving_average
-from crypto_bot.strategies.base import Strategy
+from crypto_bot.core.models import HOLD, Candle, MarketContext, Signal, SignalType
+from crypto_bot.indicators.stream import moving_average
+from crypto_bot.strategies.base import Strategy, StrategyState
 
 
 class MACrossover(Strategy):
@@ -30,32 +30,38 @@ class MACrossover(Strategy):
         # Need two consecutive bars where the slow MA is defined to detect a cross.
         return self.slow_period + 1
 
-    def generate(self, candles: list[Candle], symbol: str | None = None) -> Signal:
-        if len(candles) < self.warmup:
+    def new_state(self, symbol: str | None = None) -> StrategyState:
+        return _MACrossoverState(self)
+
+
+class _MACrossoverState(StrategyState):
+    __slots__ = ("_s", "_fast", "_slow", "_fast_prev", "_slow_prev", "_bars", "_up", "_down")
+
+    def __init__(self, strategy: MACrossover) -> None:
+        self._s = strategy
+        self._fast = moving_average(strategy.fast_period, strategy.ma_type)
+        self._slow = moving_average(strategy.slow_period, strategy.ma_type)
+        self._fast_prev: float | None = None
+        self._slow_prev: float | None = None
+        self._bars = 0
+        label = f"fast {strategy.ma_type.upper()}({strategy.fast_period}) crossed"
+        self._up = Signal(SignalType.BUY, reason=f"{label} above slow({strategy.slow_period})")
+        self._down = Signal(
+            SignalType.SELL, reason=f"{label} below slow({strategy.slow_period})"
+        )
+
+    def update(self, candle: Candle, context: MarketContext | None = None) -> Signal:
+        close = candle.close
+        fast_now = self._fast.update(close)
+        slow_now = self._slow.update(close)
+        fast_prev, slow_prev = self._fast_prev, self._slow_prev
+        self._fast_prev, self._slow_prev = fast_now, slow_now
+        self._bars += 1
+        if self._bars < self._s.warmup or fast_prev is None or slow_prev is None:
             return HOLD
 
-        closes = [c.close for c in candles]
-        fast = moving_average(closes, self.fast_period, self.ma_type)
-        slow = moving_average(closes, self.slow_period, self.ma_type)
-
-        fast_now, fast_prev = fast[-1], fast[-2]
-        slow_now, slow_prev = slow[-1], slow[-2]
-        if None in (fast_now, fast_prev, slow_now, slow_prev):
-            return HOLD
-
-        crossed_up = fast_prev <= slow_prev and fast_now > slow_now
-        crossed_down = fast_prev >= slow_prev and fast_now < slow_now
-
-        if crossed_up:
-            return Signal(
-                SignalType.BUY,
-                reason=f"fast {self.ma_type.upper()}({self.fast_period}) crossed above "
-                f"slow({self.slow_period})",
-            )
-        if crossed_down:
-            return Signal(
-                SignalType.SELL,
-                reason=f"fast {self.ma_type.upper()}({self.fast_period}) crossed below "
-                f"slow({self.slow_period})",
-            )
+        if fast_prev <= slow_prev and fast_now > slow_now:
+            return self._up
+        if fast_prev >= slow_prev and fast_now < slow_now:
+            return self._down
         return HOLD

@@ -12,6 +12,8 @@ from pathlib import Path
 
 import yaml
 
+from crypto_bot.core.timeframes import timeframe_to_ms
+
 
 class ConfigError(Exception):
     """Raised when configuration is missing or invalid."""
@@ -22,6 +24,9 @@ class ExchangeConfig:
     name: str
     sandbox: bool = False
     options: dict = field(default_factory=dict)
+    # Max exchange requests in flight at once. Requests still pass through ccxt's rate
+    # limiter, so this bounds sockets/queueing, not the venue's request rate.
+    max_concurrency: int = 10
 
 
 @dataclass
@@ -90,6 +95,10 @@ class BotConfig:
     paper: PaperConfig
     logging: LoggingConfig
     derivatives: DerivativesConfig = field(default_factory=DerivativesConfig)
+    # Candles of history fetched per symbol at startup to warm up the strategy's
+    # indicators (raised automatically to cover the strategy's warmup). More history
+    # means indicators like a slow EMA have converged before the first live decision.
+    history_bars: int = 500
 
     @property
     def is_live(self) -> bool:
@@ -126,7 +135,10 @@ def _build_config(raw: dict) -> BotConfig:
         name=str(_require(exchange_raw, "name", "exchange.name")).lower(),
         sandbox=bool(exchange_raw.get("sandbox", False)),
         options=dict(exchange_raw.get("options") or {}),
+        max_concurrency=int(exchange_raw.get("max_concurrency", 10)),
     )
+    if exchange.max_concurrency < 1:
+        raise ConfigError("exchange.max_concurrency must be >= 1")
 
     symbols = raw.get("symbols") or []
     if not isinstance(symbols, list) or not symbols:
@@ -148,9 +160,16 @@ def _build_config(raw: dict) -> BotConfig:
     derivatives = _build_derivatives(raw.get("derivatives") or {})
 
     timeframe = str(raw.get("timeframe", "1h"))
+    try:
+        timeframe_to_ms(timeframe)
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
     poll_seconds = int(raw.get("poll_seconds", 60))
     if poll_seconds <= 0:
         raise ConfigError("poll_seconds must be a positive integer")
+    history_bars = int(raw.get("history_bars", 500))
+    if history_bars < 1:
+        raise ConfigError("history_bars must be a positive integer")
 
     # The paper portfolio tracks a single cash currency, so every symbol must quote in it.
     # Perp symbols carry a settlement suffix (BTC/USDT:USDT) — compare the quote only.
@@ -173,6 +192,7 @@ def _build_config(raw: dict) -> BotConfig:
         paper=paper,
         logging=logging_cfg,
         derivatives=derivatives,
+        history_bars=history_bars,
     )
 
 

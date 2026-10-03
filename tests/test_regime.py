@@ -1,18 +1,20 @@
 import pytest
 
 from crypto_bot.core.models import Signal, SignalType
+from crypto_bot.strategies.base import Strategy
 from crypto_bot.strategies.regime import RegimeSwitch
 
 # Small ADX period keeps fixtures compact: ADX defined from bar 2*3 = 6.
 PARAMS = {"adx_period": 3, "adx_threshold": 25}
 
 
-class _Stub:
-    """Minimal strategy double with a fixed answer, to make routing observable."""
+class _Stub(Strategy):
+    """Minimal (windowed) strategy double with a fixed answer, to make routing observable."""
 
     warmup = 1
 
     def __init__(self, tag: str, sig: SignalType = SignalType.BUY) -> None:
+        super().__init__({})
         self.tag = tag
         self.sig = sig
 
@@ -95,13 +97,20 @@ def test_rejects_nonpositive_adx_period():
 
 
 def test_hold_when_adx_not_yet_defined(make_candles, monkeypatch):
-    # adx() is provably defined at the last bar for every input at exactly `warmup`
+    # ADX is provably defined at the last bar for every input at exactly `warmup`
     # candles (same reasoning as the other indicator-strategies' None-guards), so this
-    # branch is unreachable with well-formed data. Force it via the adx() call to prove
+    # branch is unreachable with well-formed data. Force it via the indicator to prove
     # the guard still holds if that invariant were ever violated.
     import crypto_bot.strategies.regime as mod
 
-    monkeypatch.setattr(mod, "adx", lambda highs, lows, closes, period: [None] * len(closes))
+    class _NeverReady:
+        def __init__(self, *_args):
+            pass
+
+        def update(self, *_values):
+            return None
+
+    monkeypatch.setattr(mod, "ADX", _NeverReady)
     strategy = _regime_with_stubs()
     candles = make_candles([float(i) for i in range(1, strategy.warmup + 1)])
     assert strategy.generate(candles, "BTC/USDT").type == SignalType.HOLD

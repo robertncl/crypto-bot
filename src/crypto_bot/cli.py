@@ -133,22 +133,23 @@ def _cmd_backtest(args: argparse.Namespace) -> int:
         return 2
 
     # Imported here so `validate-config`/`strategies` work without ccxt installed.
-    from crypto_bot.backtest import Backtester, fetch_history
+    from crypto_bot.backtest import Backtester, fetch_history_many
     from crypto_bot.exchanges.factory import build_exchange
 
     exchange = build_exchange(config.exchange, require_credentials=False)
     since_ms = int((time.time() - args.days * 86_400) * 1000)
-    candles_by_symbol = {}
     try:
-        for symbol in config.symbols:
-            candles = fetch_history(exchange, symbol, config.timeframe, since_ms)
-            if not candles:
-                print(f"no history returned for {symbol}; aborting", file=sys.stderr)
-                return 1
-            print(f"fetched {len(candles)} {config.timeframe} candles for {symbol}")
-            candles_by_symbol[symbol] = candles
+        # All symbols download together (concurrently on ccxt venues).
+        candles_by_symbol = fetch_history_many(
+            exchange, config.symbols, config.timeframe, since_ms
+        )
     finally:
         exchange.close()
+    for symbol, candles in candles_by_symbol.items():
+        if not candles:
+            print(f"no history returned for {symbol}; aborting", file=sys.stderr)
+            return 1
+        print(f"fetched {len(candles)} {config.timeframe} candles for {symbol}")
 
     result = Backtester(config).run(candles_by_symbol)
     print()
