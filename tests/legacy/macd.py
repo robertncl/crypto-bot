@@ -18,9 +18,9 @@ noise a raw price crossover would emit. Defaults are the classic 12 / 26 / 9.
 
 from __future__ import annotations
 
-from crypto_bot.core.models import HOLD, Candle, MarketContext, Signal, SignalType
-from crypto_bot.indicators.stream import MACD
-from crypto_bot.strategies.base import Strategy, StrategyState
+from crypto_bot.core.models import HOLD, Candle, Signal, SignalType
+from crypto_bot.indicators.ta import macd
+from crypto_bot.strategies.base import Strategy
 
 
 class MACDMomentum(Strategy):
@@ -42,35 +42,32 @@ class MACDMomentum(Strategy):
         # defined bars to detect a cross, so slow + signal candles in total.
         return self.slow_period + self.signal_period
 
-    def new_state(self, symbol: str | None = None) -> StrategyState:
-        return _MACDState(self)
-
-
-class _MACDState(StrategyState):
-    __slots__ = ("_s", "_macd", "_macd_prev", "_sig_prev", "_bars", "_up", "_down")
-
-    def __init__(self, strategy: MACDMomentum) -> None:
-        self._s = strategy
-        self._macd = MACD(strategy.fast_period, strategy.slow_period, strategy.signal_period)
-        self._macd_prev: float | None = None
-        self._sig_prev: float | None = None
-        self._bars = 0
-        label = f"MACD({strategy.fast_period},{strategy.slow_period},{strategy.signal_period})"
-        self._up = Signal(SignalType.BUY, reason=f"{label} crossed above signal")
-        self._down = Signal(SignalType.SELL, reason=f"{label} crossed below signal")
-
-    def update(self, candle: Candle, context: MarketContext | None = None) -> Signal:
-        m = self._macd
-        m.update(candle.close)
-        macd_now, sig_now = m.macd, m.signal
-        macd_prev, sig_prev = self._macd_prev, self._sig_prev
-        self._macd_prev, self._sig_prev = macd_now, sig_now
-        self._bars += 1
-        if self._bars < self._s.warmup or None in (macd_now, macd_prev, sig_now, sig_prev):
+    def generate(self, candles: list[Candle], symbol: str | None = None) -> Signal:
+        if len(candles) < self.warmup:
             return HOLD
 
-        if macd_prev <= sig_prev and macd_now > sig_now:
-            return self._up
-        if macd_prev >= sig_prev and macd_now < sig_now:
-            return self._down
+        closes = [c.close for c in candles]
+        macd_line, signal_line, _hist = macd(
+            closes, self.fast_period, self.slow_period, self.signal_period
+        )
+        macd_now, macd_prev = macd_line[-1], macd_line[-2]
+        sig_now, sig_prev = signal_line[-1], signal_line[-2]
+        if None in (macd_now, macd_prev, sig_now, sig_prev):
+            return HOLD
+
+        crossed_up = macd_prev <= sig_prev and macd_now > sig_now
+        crossed_down = macd_prev >= sig_prev and macd_now < sig_now
+
+        if crossed_up:
+            return Signal(
+                SignalType.BUY,
+                reason=f"MACD({self.fast_period},{self.slow_period},{self.signal_period}) "
+                f"crossed above signal",
+            )
+        if crossed_down:
+            return Signal(
+                SignalType.SELL,
+                reason=f"MACD({self.fast_period},{self.slow_period},{self.signal_period}) "
+                f"crossed below signal",
+            )
         return HOLD

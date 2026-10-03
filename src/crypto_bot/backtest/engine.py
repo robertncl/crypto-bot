@@ -8,12 +8,18 @@ Portfolio` and :class:`~crypto_bot.core.broker.PaperBroker` used for paper/live
 trading, one bar at a time:
 
 * :class:`ReplayExchange` is an :class:`ExchangeAdapter` whose clock is a cursor into
-  pre-fetched history; each ``fetch_candles`` call returns the window ending at the
-  cursor, exactly like polling a venue as time passes.
+  pre-fetched history; each ``fetch_candles`` call returns candles up to the cursor,
+  exactly like polling a venue as time passes (honouring ``since``, so the engine's
+  incremental polling pulls one new bar per step).
 * :class:`RecordingBroker` wraps the paper broker to keep every fill (stamped with
   bar time, not wall-clock) for trade-level statistics.
 * :class:`Backtester` advances the cursor, calls ``engine.run_once()`` per bar,
-  records the equity curve, and summarizes it into a :class:`BacktestResult`.
+  records the equity curve, and summarizes it into a :class:`BacktestResult`. The
+  engine's clock is pinned to the replayed bar's close, so each bar is decided the
+  moment it closes, as live.
+
+Because strategies keep incremental state, a replay costs O(1) per bar and symbol — a
+backtest's runtime grows linearly with its length rather than with length × window.
 
 Fill model = the paper broker's: market orders at the bar close, adjusted for
 configured slippage and fees. Same caveats as any close-fill backtest: no intrabar
@@ -23,6 +29,7 @@ stop resolution, no order-book depth.
 from __future__ import annotations
 
 import logging
+from bisect import bisect_left
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -30,7 +37,7 @@ from datetime import datetime, timezone
 from crypto_bot.backtest import metrics as m
 from crypto_bot.config import BotConfig
 from crypto_bot.core.broker import Broker, PaperBroker
-from crypto_bot.core.engine import Engine
+from crypto_bot.core.engine import CLOSE_GRACE_MS, Engine
 from crypto_bot.core.models import Candle, Order, OrderRequest
 from crypto_bot.core.portfolio import Portfolio
 from crypto_bot.exchanges.base import ExchangeAdapter
@@ -46,6 +53,7 @@ class ReplayExchange(ExchangeAdapter):
 
     def __init__(self, candles_by_symbol: dict[str, list[Candle]]) -> None:
         self._data = candles_by_symbol
+        self._stamps = {s: [c.timestamp for c in series] for s, series in self._data.items()}
         self.cursor = 0  # index of the "current" bar
         # History is fixed for the life of a replay, so measure it once instead of on
         # every advance()/current_timestamp() — those run per bar, per backtest.
@@ -74,7 +82,10 @@ class ReplayExchange(ExchangeAdapter):
     ) -> list[Candle]:
         series = self._data[symbol]
         end = self.cursor + 1
-        return series[max(0, end - limit) : end]
+        if since is None:
+            return series[max(0, end - limit) : end]
+        start = bisect_left(self._stamps[symbol], since, 0, end)
+        return series[start : min(end, start + limit)]
 
     def fetch_last_price(self, symbol: str) -> float:
         return self._data[symbol][self.cursor].close
@@ -187,6 +198,7 @@ class Backtester:
         # through the backtest logger at DEBUG for troubleshooting.
         engine_log = logging.getLogger(f"{LOGGER_NAME}.backtest.engine")
         engine_log.setLevel(logging.ERROR)
+        tf_ms = m.timeframe_to_ms(self.config.timeframe)
         engine = Engine(
             self.config,
             replay,
@@ -194,6 +206,8 @@ class Backtester:
             RiskManager(self.config.risk),
             portfolio,
             logger=engine_log,
+            # "Now" is the instant the replayed bar closed: that bar is decided, no later.
+            clock=lambda: replay.current_timestamp() + tf_ms + CLOSE_GRACE_MS,
         )
         engine.broker = RecordingBroker(
             PaperBroker(
@@ -310,17 +324,57 @@ def fetch_history(
     cursor = since_ms
     while True:
         batch = exchange.fetch_candles(symbol, timeframe, limit=page_size, since=cursor)
-        if not batch:
-            break
-        # Guard against venues echoing the same page forever.
-        fresh = [c for c in batch if not out or c.timestamp > out[-1].timestamp]
-        if not fresh:
-            break
-        out.extend(fresh)
-        if until_ms is not None and out[-1].timestamp >= until_ms:
-            out = [c for c in out if c.timestamp <= until_ms]
-            break
-        if len(batch) < page_size:
-            break
+        if _absorb_page(out, batch, until_ms, page_size):
+            return out
         cursor = out[-1].timestamp + tf_ms
+
+
+def fetch_history_many(
+    exchange: ExchangeAdapter,
+    symbols: list[str],
+    timeframe: str,
+    since_ms: int,
+    until_ms: int | None = None,
+    page_size: int = 1000,
+) -> dict[str, list[Candle]]:
+    """:func:`fetch_history` for many symbols at once.
+
+    All symbols paginate in lockstep and each round of pages is one
+    :meth:`~ExchangeAdapter.fetch_candles_many` call, so on a concurrent adapter the
+    download takes about as long as the longest single symbol's, not the sum of all.
+    Raises the first per-symbol :class:`ExchangeError`.
+    """
+    tf_ms = m.timeframe_to_ms(timeframe)
+    out: dict[str, list[Candle]] = {symbol: [] for symbol in symbols}
+    cursors = dict.fromkeys(symbols, since_ms)
+    while cursors:
+        pages = exchange.fetch_candles_many(
+            timeframe, {symbol: (page_size, cursor) for symbol, cursor in cursors.items()}
+        )
+        for symbol in list(cursors):
+            page = pages[symbol]
+            if isinstance(page, Exception):
+                raise page
+            if _absorb_page(out[symbol], page, until_ms, page_size):
+                del cursors[symbol]
+            else:
+                cursors[symbol] = out[symbol][-1].timestamp + tf_ms
     return out
+
+
+def _absorb_page(
+    out: list[Candle], batch: list[Candle], until_ms: int | None, page_size: int
+) -> bool:
+    """Append one fetched page to ``out``; return True once pagination is finished."""
+    if not batch:
+        return True
+    # Guard against venues echoing the same page forever.
+    fresh = [c for c in batch if not out or c.timestamp > out[-1].timestamp]
+    if not fresh:
+        return True
+    out.extend(fresh)
+    if until_ms is not None and out[-1].timestamp >= until_ms:
+        while out[-1].timestamp > until_ms:  # ascending, so trim from the end
+            out.pop()
+        return True
+    return len(batch) < page_size

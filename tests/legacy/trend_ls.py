@@ -33,9 +33,9 @@ it does catch pay for the breaks that fail.
 
 from __future__ import annotations
 
-from crypto_bot.core.models import HOLD, Candle, MarketContext, Signal, SignalType
-from crypto_bot.indicators.stream import ADX, EMA, highest, lowest
-from crypto_bot.strategies.base import Strategy, StrategyState
+from crypto_bot.core.models import HOLD, Candle, Signal, SignalType
+from crypto_bot.indicators.ta import adx, ema, highest, lowest
+from crypto_bot.strategies.base import Strategy
 
 
 class TrendLongShort(Strategy):
@@ -62,51 +62,43 @@ class TrendLongShort(Strategy):
         # defined at 2*adx_period - 1; the EMA at trend_period - 1.
         return max(self.lookback + 1, 2 * self.adx_period, self.trend_period)
 
-    def new_state(self, symbol: str | None = None) -> StrategyState:
-        return _TrendLongShortState(self)
-
-
-class _TrendLongShortState(StrategyState):
-    __slots__ = ("_s", "_adx", "_high", "_low", "_ema", "_bars")
-
-    def __init__(self, strategy: TrendLongShort) -> None:
-        self._s = strategy
-        self._adx = ADX(strategy.adx_period)
-        self._high = highest(strategy.lookback)
-        self._low = lowest(strategy.lookback)
-        # Slow-EMA regime reference; None when the filter is disabled.
-        self._ema = EMA(strategy.trend_period) if strategy.trend_period > 0 else None
-        self._bars = 0
-
-    def update(self, candle: Candle, context: MarketContext | None = None) -> Signal:
-        close = candle.close
-        # The channel as of the previous bar, read before this bar is folded in.
-        channel_high = self._high.value
-        channel_low = self._low.value
-        self._high.update(candle.high)
-        self._low.update(candle.low)
-        strength = self._adx.update(candle.high, candle.low, close)
-        regime = self._ema.update(close) if self._ema is not None else None
-        self._bars += 1
-        s = self._s
-        if self._bars < s.warmup:
+    def generate(self, candles: list[Candle], symbol: str | None = None) -> Signal:
+        if len(candles) < self.warmup:
             return HOLD
 
-        if strength is None or strength < s.adx_threshold:
+        highs = [c.high for c in candles]
+        lows = [c.low for c in candles]
+        closes = [c.close for c in candles]
+        close = closes[-1]
+
+        strength = adx(highs, lows, closes, self.adx_period)[-1]
+        if strength is None or strength < self.adx_threshold:
             return HOLD  # ranging: stand aside rather than buy the chop
+
+        # `[-2]` is the channel as of the previous bar, excluding the breaking bar.
+        channel_high = highest(highs, self.lookback)[-2]
+        channel_low = lowest(lows, self.lookback)[-2]
         if channel_high is None or channel_low is None:
             return HOLD
+
+        regime = self._regime(closes)
 
         if close > channel_high and (regime is None or close > regime):
             return Signal(
                 SignalType.BUY,
-                reason=f"close {close:.4f} broke {s.lookback}-bar high "
+                reason=f"close {close:.4f} broke {self.lookback}-bar high "
                 f"{channel_high:.4f} (ADX {strength:.0f})",
             )
         if close < channel_low and (regime is None or close < regime):
             return Signal(
                 SignalType.SELL,
-                reason=f"close {close:.4f} broke {s.lookback}-bar low "
+                reason=f"close {close:.4f} broke {self.lookback}-bar low "
                 f"{channel_low:.4f} (ADX {strength:.0f})",
             )
         return HOLD
+
+    def _regime(self, closes: list[float]) -> float | None:
+        """Slow-EMA regime reference, or None when the filter is disabled/undefined."""
+        if self.trend_period <= 0:
+            return None
+        return ema(closes, self.trend_period)[-1]

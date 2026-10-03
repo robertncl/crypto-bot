@@ -188,3 +188,28 @@ def test_non_mapping_exchange_section_is_rejected(tmp_path):
     )
     with pytest.raises(ConfigError, match="exchange.*mapping"):
         load_config(_write(tmp_path, raw))
+
+
+def test_scaling_settings_default_and_parse(tmp_path):
+    cfg = load_config(_write(tmp_path, VALID))
+    assert cfg.history_bars == 500
+    assert cfg.exchange.max_concurrency == 10
+
+    raw = VALID.replace("  sandbox: false\n", "  sandbox: false\n  max_concurrency: 4\n")
+    cfg = load_config(_write(tmp_path, raw + "history_bars: 1000\n"))
+    assert cfg.history_bars == 1000
+    assert cfg.exchange.max_concurrency == 4
+
+
+@pytest.mark.parametrize(
+    "old,new,match",
+    [
+        ("  sandbox: false\n", "  sandbox: false\n  max_concurrency: 0\n", "max_concurrency"),
+        ("timeframe: 1h", "timeframe: 1hour", "unsupported timeframe"),
+        ("timeframe: 1h", "timeframe: 0m", "timeframe must be positive"),
+        ("poll_seconds: 30", "poll_seconds: 30\nhistory_bars: 0", "history_bars"),
+    ],
+)
+def test_scaling_settings_are_validated(tmp_path, old, new, match):
+    with pytest.raises(ConfigError, match=match):
+        load_config(_write(tmp_path, VALID.replace(old, new)))

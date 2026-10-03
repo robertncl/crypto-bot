@@ -84,14 +84,23 @@ def test_is_registered():
 
 
 def test_hold_when_channel_not_yet_defined(monkeypatch):
-    # highest()/lowest() are provably defined at the compared bar for every input at
+    # The channel extremes are provably defined at the compared bar for every input at
     # exactly `warmup` candles (same reasoning as breakout's own guard), so this branch
-    # is unreachable with well-formed data. Force it via the indicator calls to prove
-    # the guard still holds if that invariant were ever violated.
+    # is unreachable with well-formed data. Force it via the indicators to prove the
+    # guard still holds if that invariant were ever violated.
     import crypto_bot.strategies.trend_ls as mod
 
-    monkeypatch.setattr(mod, "highest", lambda values, period: [None] * len(values))
-    monkeypatch.setattr(mod, "lowest", lambda values, period: [None] * len(values))
+    class _NeverReady:
+        value = None
+
+        def __init__(self, *_args):
+            pass
+
+        def update(self, *_values):
+            return None
+
+    monkeypatch.setattr(mod, "highest", _NeverReady)
+    monkeypatch.setattr(mod, "lowest", _NeverReady)
     params = {"lookback": 5, "adx_period": 3, "adx_threshold": 0, "trend_period": 0}
     strategy = TrendLongShort(params)
     candles = _ohlc([float(i) for i in range(1, strategy.warmup + 1)])

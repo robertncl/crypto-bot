@@ -19,11 +19,9 @@ sustained trend, so keep a protective stop.
 
 from __future__ import annotations
 
-from collections import deque
-
-from crypto_bot.core.models import HOLD, Candle, MarketContext, Signal, SignalType
+from crypto_bot.core.models import HOLD, Candle, Signal, SignalType
 from crypto_bot.indicators.ta import bollinger_bands
-from crypto_bot.strategies.base import Strategy, StrategyState
+from crypto_bot.strategies.base import Strategy
 
 
 class BollingerReversion(Strategy):
@@ -43,44 +41,33 @@ class BollingerReversion(Strategy):
         # Bands need `period` closes; we compare two consecutive bars to detect a pierce.
         return self.period + 1
 
-    def new_state(self, symbol: str | None = None) -> StrategyState:
-        return _BollingerState(self)
-
-
-class _BollingerState(StrategyState):
-    """Keeps only the last ``period + 1`` closes.
-
-    The bands over a trailing window carry no state from earlier bars, so the two bars
-    compared need only ``period + 1`` closes; evaluating exactly that slice keeps the
-    values identical to the windowed implementation at O(period) per bar.
-    """
-
-    __slots__ = ("_s", "_closes")
-
-    def __init__(self, strategy: BollingerReversion) -> None:
-        self._s = strategy
-        self._closes: deque[float] = deque(maxlen=strategy.period + 1)
-
-    def update(self, candle: Candle, context: MarketContext | None = None) -> Signal:
-        closes = self._closes
-        closes.append(candle.close)
-        s = self._s
-        if len(closes) < s.warmup:
+    def generate(self, candles: list[Candle], symbol: str | None = None) -> Signal:
+        if len(candles) < self.warmup:
             return HOLD
 
-        lower, _middle, upper = bollinger_bands(list(closes), s.period, s.num_std)
+        # The bands over a trailing `period` window carry no state from earlier bars, so
+        # the two bars compared below need only `period + 1` closes — no need to run the
+        # SMA and rolling stddev across the engine's whole (~200-bar) buffer.
+        closes = [c.close for c in candles[-(self.period + 1) :]]
+        lower, _middle, upper = bollinger_bands(closes, self.period, self.num_std)
         if None in (lower[-1], lower[-2], upper[-1], upper[-2]):
             return HOLD
 
         close_now, close_prev = closes[-1], closes[-2]
-        if close_prev >= lower[-2] and close_now < lower[-1]:
+
+        pierced_low = close_prev >= lower[-2] and close_now < lower[-1]
+        pierced_high = close_prev <= upper[-2] and close_now > upper[-1]
+
+        if pierced_low:
             return Signal(
                 SignalType.BUY,
-                reason=f"close pierced lower Bollinger band ({s.period}, {s.num_std:g}σ)",
+                reason=f"close pierced lower Bollinger band "
+                f"({self.period}, {self.num_std:g}σ)",
             )
-        if close_prev <= upper[-2] and close_now > upper[-1]:
+        if pierced_high:
             return Signal(
                 SignalType.SELL,
-                reason=f"close pierced upper Bollinger band ({s.period}, {s.num_std:g}σ)",
+                reason=f"close pierced upper Bollinger band "
+                f"({self.period}, {self.num_std:g}σ)",
             )
         return HOLD

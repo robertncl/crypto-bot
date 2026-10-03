@@ -17,9 +17,9 @@ generous take-profit so the winners pay for the losers.
 
 from __future__ import annotations
 
-from crypto_bot.core.models import HOLD, Candle, MarketContext, Signal, SignalType
-from crypto_bot.indicators.stream import highest, lowest
-from crypto_bot.strategies.base import Strategy, StrategyState
+from crypto_bot.core.models import HOLD, Candle, Signal, SignalType
+from crypto_bot.indicators.ta import highest, lowest
+from crypto_bot.strategies.base import Strategy
 
 
 class Breakout(Strategy):
@@ -36,40 +36,32 @@ class Breakout(Strategy):
         # Need `lookback` bars to form the channel, plus the current bar that breaks it.
         return self.lookback + 1
 
-    def new_state(self, symbol: str | None = None) -> StrategyState:
-        return _BreakoutState(self)
-
-
-class _BreakoutState(StrategyState):
-    __slots__ = ("_s", "_high", "_low", "_bars")
-
-    def __init__(self, strategy: Breakout) -> None:
-        self._s = strategy
-        self._high = highest(strategy.lookback)
-        self._low = lowest(strategy.lookback)
-        self._bars = 0
-
-    def update(self, candle: Candle, context: MarketContext | None = None) -> Signal:
-        # Read the channel *before* folding in this bar: that is the prior `lookback`-bar
-        # range, so the breaking bar cannot widen the level it has to clear.
-        channel_high = self._high.value
-        channel_low = self._low.value
-        self._high.update(candle.high)
-        self._low.update(candle.low)
-        self._bars += 1
-        lookback = self._s.lookback
-        if self._bars < self._s.warmup or channel_high is None or channel_low is None:
+    def generate(self, candles: list[Candle], symbol: str | None = None) -> Signal:
+        if len(candles) < self.warmup:
             return HOLD
 
-        close = candle.close
+        # The channel is a rolling extreme, so it depends only on the `lookback` bars
+        # ending on the previous one — feed the indicators exactly that slice instead of
+        # the engine's whole (~200-bar) buffer. Identical values, a fraction of the work.
+        window = candles[-(self.lookback + 1) :]
+        highs = [c.high for c in window]
+        lows = [c.low for c in window]
+        close = candles[-1].close
+
+        # `[-2]` is the channel as of the previous bar, so the current bar is excluded.
+        channel_high = highest(highs, self.lookback)[-2]
+        channel_low = lowest(lows, self.lookback)[-2]
+        if channel_high is None or channel_low is None:
+            return HOLD
+
         if close > channel_high:
             return Signal(
                 SignalType.BUY,
-                reason=f"close {close:.4f} broke {lookback}-bar high {channel_high:.4f}",
+                reason=f"close {close:.4f} broke {self.lookback}-bar high {channel_high:.4f}",
             )
         if close < channel_low:
             return Signal(
                 SignalType.SELL,
-                reason=f"close {close:.4f} broke {lookback}-bar low {channel_low:.4f}",
+                reason=f"close {close:.4f} broke {self.lookback}-bar low {channel_low:.4f}",
             )
         return HOLD

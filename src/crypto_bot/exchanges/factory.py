@@ -43,4 +43,5 @@ def build_exchange(
         password=password,
         sandbox=cfg.sandbox,
         options=cfg.options,
+        max_concurrency=cfg.max_concurrency,
     )

@@ -52,6 +52,29 @@ class ExchangeAdapter(ABC):
     def cancel_order(self, order_id: str, symbol: str) -> None:
         """Cancel an open order. Requires API keys."""
 
+    def fetch_candles_many(
+        self, timeframe: str, requests: dict[str, tuple[int, int | None]]
+    ) -> dict[str, list[Candle] | ExchangeError]:
+        """Fetch candles for many symbols in one call: ``{symbol: (limit, since)}``.
+
+        A failure for one symbol comes back as that symbol's :class:`ExchangeError`
+        *value* instead of being raised, so one bad market cannot sink a cycle for the
+        rest. This default issues the requests one after another; adapters that can talk
+        to the venue concurrently (see ``CCXTAdapter``) override it, which is what lets
+        the live loop poll many symbols in roughly the time of one.
+        """
+        out: dict[str, list[Candle] | ExchangeError] = {}
+        for symbol, (limit, since) in requests.items():
+            try:
+                out[symbol] = self.fetch_candles(symbol, timeframe, limit=limit, since=since)
+            except ExchangeError as exc:
+                out[symbol] = exc
+        return out
+
+    def fetch_funding_rates(self, symbols: list[str]) -> dict[str, float | None]:
+        """Funding rates for many symbols (``None`` = unknown). Batched where supported."""
+        return {symbol: self.fetch_funding_rate(symbol) for symbol in symbols}
+
     def fetch_funding_rate(self, symbol: str) -> float | None:
         """Current perpetual funding rate for ``symbol``, or None if not applicable.
 

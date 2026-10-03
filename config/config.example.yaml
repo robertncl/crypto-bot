@@ -12,6 +12,9 @@ exchange:
   sandbox: false
   # Optional ccxt options, e.g. defaultType for futures. Leave empty for spot.
   options: {}
+  # Max exchange requests in flight at once. Every request still passes ccxt's rate
+  # limiter, so raising this never exceeds the venue's limits; it just fills the gaps.
+  max_concurrency: 10
 
 # Symbols to trade, in ccxt unified format BASE/QUOTE.
 # For the paper portfolio, all symbols should share one quote currency (cash).
@@ -19,9 +22,14 @@ symbols:
   - BTC/USDT
   - ETH/USDT
 
-# Candle timeframe and how often to poll for new data.
+# Candle timeframe and how often to poll for new data. Strategy signals are evaluated
+# once per *closed* candle (the loop also wakes just after each candle closes);
+# protective exits are checked on every poll.
 timeframe: 1h
 poll_seconds: 60
+# Candles of history loaded per symbol at startup to warm up indicators (raised
+# automatically if the strategy needs more). Longer = slow EMAs fully converged.
+history_bars: 500
 
 strategy:
   name: ma_crossover

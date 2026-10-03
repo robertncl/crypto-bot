@@ -6,7 +6,7 @@ import math
 
 import pytest
 
-from crypto_bot.backtest import Backtester, align_candles, fetch_history
+from crypto_bot.backtest import Backtester, align_candles, fetch_history, fetch_history_many
 from crypto_bot.backtest.metrics import (
     bar_returns,
     cagr,
@@ -178,6 +178,55 @@ def test_fetch_history_paginates_without_duplicates():
     out = fetch_history(exchange, "BTC/USDT", "1h", history[0].timestamp, page_size=100)
     assert [c.timestamp for c in out] == [c.timestamp for c in history]
     assert exchange.calls == 3  # 100 + 100 + 50
+
+
+class _PagedBatchExchange(_PagedExchange):
+    """Per-symbol histories behind the batch API, counting rounds of requests."""
+
+    def __init__(self, histories: dict[str, list[Candle]]):
+        super().__init__([])
+        self._histories = histories
+        self.rounds = 0
+
+    def fetch_candles_many(self, timeframe, requests):
+        from crypto_bot.exchanges.base import ExchangeError
+
+        self.rounds += 1
+        out = {}
+        for symbol, (limit, since) in requests.items():
+            if symbol not in self._histories:
+                out[symbol] = ExchangeError(f"unknown {symbol}")
+                continue
+            self._candles = self._histories[symbol]
+            out[symbol] = self.fetch_candles(symbol, timeframe, limit, since)
+        return out
+
+
+def test_fetch_history_many_paginates_all_symbols_in_lockstep():
+    long_, short = _candles(list(range(250))), _candles(list(range(120)))
+    exchange = _PagedBatchExchange({"BTC/USDT": long_, "ETH/USDT": short})
+    out = fetch_history_many(
+        exchange, ["BTC/USDT", "ETH/USDT"], "1h", long_[0].timestamp, page_size=100
+    )
+    assert out["BTC/USDT"] == long_ and out["ETH/USDT"] == short
+    assert exchange.rounds == 3  # rounds track the longest history, not the sum
+
+
+def test_fetch_history_many_truncates_at_until_ms():
+    history = _candles(list(range(50)))
+    exchange = _PagedBatchExchange({"BTC/USDT": history})
+    out = fetch_history_many(
+        exchange, ["BTC/USDT"], "1h", history[0].timestamp, until_ms=history[9].timestamp
+    )
+    assert out["BTC/USDT"] == history[:10]
+
+
+def test_fetch_history_many_raises_a_per_symbol_error():
+    from crypto_bot.exchanges.base import ExchangeError
+
+    exchange = _PagedBatchExchange({"BTC/USDT": _candles([1.0, 2.0])})
+    with pytest.raises(ExchangeError, match="unknown ETH/USDT"):
+        fetch_history_many(exchange, ["BTC/USDT", "ETH/USDT"], "1h", 0)
 
 
 # ── end-to-end replay ────────────────────────────────────────────────────────

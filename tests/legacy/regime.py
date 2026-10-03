@@ -35,9 +35,9 @@ with them enabled.
 
 from __future__ import annotations
 
-from crypto_bot.core.models import HOLD, Candle, MarketContext, Signal
-from crypto_bot.indicators.stream import ADX
-from crypto_bot.strategies.base import Strategy, StrategyState
+from crypto_bot.core.models import HOLD, Candle, Signal
+from crypto_bot.indicators.ta import adx
+from crypto_bot.strategies.base import Strategy
 
 _DEFAULT_TREND = {"name": "supertrend", "params": {}}
 _DEFAULT_RANGE = {"name": "rsi_reversion", "params": {}}
@@ -60,14 +60,14 @@ class RegimeSwitch(Strategy):
     def _build_leg(self, key: str, default: dict) -> Strategy:
         # Imported here, not at module top: the registry imports this module, so a
         # top-level import would be circular. By construction time it is fully loaded.
-        from crypto_bot.strategies.registry import build_strategy
+        from legacy import LEGACY
 
         spec = self.params.get(key, default)
         if not isinstance(spec, dict) or "name" not in spec:
             raise ValueError(f"{key} must be a mapping with a 'name' (and optional 'params')")
         if str(spec["name"]).lower() == self.name:
             raise ValueError("regime cannot nest itself as a sub-strategy")
-        return build_strategy(str(spec["name"]), dict(spec.get("params") or {}))
+        return LEGACY[str(spec["name"]).lower()](dict(spec.get("params") or {}))
 
     @property
     def warmup(self) -> int:
@@ -79,36 +79,24 @@ class RegimeSwitch(Strategy):
             self.range_strategy.warmup,
         )
 
-    def new_state(self, symbol: str | None = None) -> StrategyState:
-        return _RegimeState(self, symbol)
-
-
-class _RegimeState(StrategyState):
-    __slots__ = ("_s", "_adx", "_trend", "_range", "_bars")
-
-    def __init__(self, strategy: RegimeSwitch, symbol: str | None) -> None:
-        self._s = strategy
-        self._adx = ADX(strategy.adx_period)
-        # Both legs see every bar, so whichever the regime selects is already current.
-        self._trend = strategy.trend_strategy.new_state(symbol)
-        self._range = strategy.range_strategy.new_state(symbol)
-        self._bars = 0
-
-    def update(self, candle: Candle, context: MarketContext | None = None) -> Signal:
-        strength = self._adx.update(candle.high, candle.low, candle.close)
-        trend_signal = self._trend.update(candle)
-        range_signal = self._range.update(candle)
-        self._bars += 1
-        s = self._s
-        if self._bars < s.warmup or strength is None:
+    def generate(self, candles: list[Candle], symbol: str | None = None) -> Signal:
+        if len(candles) < self.warmup:
             return HOLD
 
-        trending = strength >= s.adx_threshold
-        signal = trend_signal if trending else range_signal
+        highs = [c.high for c in candles]
+        lows = [c.low for c in candles]
+        closes = [c.close for c in candles]
+        strength = adx(highs, lows, closes, self.adx_period)[-1]
+        if strength is None:
+            return HOLD
+
+        trending = strength >= self.adx_threshold
+        leg = self.trend_strategy if trending else self.range_strategy
+        signal = leg.generate(candles, symbol)
         if not signal.is_actionable:
             return signal
         regime = "trend" if trending else "range"
         return Signal(
             signal.type,
-            reason=f"{signal.reason} [ADX({s.adx_period}) {strength:.0f} → {regime} regime]",
+            reason=f"{signal.reason} [ADX({self.adx_period}) {strength:.0f} → {regime} regime]",
         )

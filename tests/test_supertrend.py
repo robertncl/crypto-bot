@@ -43,15 +43,21 @@ def test_rejects_nonpositive_multiplier():
 
 
 def test_hold_when_direction_not_yet_defined(make_candles, monkeypatch):
-    # supertrend()'s direction is provably defined at both compared bars for every
+    # The Supertrend direction is provably defined at both compared bars for every
     # input at exactly `warmup` candles, so this guard is unreachable with well-formed
-    # data. Force it via the indicator call to prove it still holds if that ever changed.
+    # data. Force it via the indicator to prove it still holds if that ever changed.
     import crypto_bot.strategies.supertrend as mod
 
-    def _fake_supertrend(highs, lows, closes, period, multiplier):
-        return [None] * len(closes), [None] * len(closes)
+    class _NeverReady:
+        value = macd = signal = None
 
-    monkeypatch.setattr(mod, "supertrend", _fake_supertrend)
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def update(self, *_values):
+            return None
+
+    monkeypatch.setattr(mod, "SupertrendIndicator", _NeverReady)
     strategy = Supertrend(PARAMS)
     candles = make_candles([100] * strategy.warmup)
     assert strategy.generate(candles).type == SignalType.HOLD

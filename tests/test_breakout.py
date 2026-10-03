@@ -54,13 +54,22 @@ def test_signal_ignores_history_beyond_the_channel(make_candles):
 
 
 def test_hold_when_channel_not_yet_defined(make_candles, monkeypatch):
-    # highest()/lowest() are provably defined at the compared bar for every input at
+    # The channel extremes are provably defined at the compared bar for every input at
     # exactly `warmup` candles, so this guard is unreachable with well-formed data.
-    # Force it via the indicator calls to prove it still holds if that ever changed.
+    # Force it via the indicators to prove it still holds if that ever changed.
     import crypto_bot.strategies.breakout as mod
 
-    monkeypatch.setattr(mod, "highest", lambda values, period: [None] * len(values))
-    monkeypatch.setattr(mod, "lowest", lambda values, period: [None] * len(values))
+    class _NeverReady:
+        value = macd = signal = None
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def update(self, *_values):
+            return None
+
+    monkeypatch.setattr(mod, "highest", _NeverReady)
+    monkeypatch.setattr(mod, "lowest", _NeverReady)
     strategy = Breakout(PARAMS)
     candles = make_candles([10] * strategy.warmup)
     assert strategy.generate(candles).type == SignalType.HOLD

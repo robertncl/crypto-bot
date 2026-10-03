@@ -19,9 +19,9 @@ is a strong trend, where "oversold" keeps getting more oversold — pair it with
 
 from __future__ import annotations
 
-from crypto_bot.core.models import HOLD, Candle, MarketContext, Signal, SignalType
-from crypto_bot.indicators.stream import RSI
-from crypto_bot.strategies.base import Strategy, StrategyState
+from crypto_bot.core.models import HOLD, Candle, Signal, SignalType
+from crypto_bot.indicators.ta import rsi
+from crypto_bot.strategies.base import Strategy
 
 
 class RSIReversion(Strategy):
@@ -42,38 +42,29 @@ class RSIReversion(Strategy):
         # rsi() needs period+1 closes for its first value; we need two in a row to see a cross.
         return self.period + 2
 
-    def new_state(self, symbol: str | None = None) -> StrategyState:
-        return _RSIReversionState(self)
-
-
-class _RSIReversionState(StrategyState):
-    __slots__ = ("_s", "_rsi", "_prev", "_bars")
-
-    def __init__(self, strategy: RSIReversion) -> None:
-        self._s = strategy
-        self._rsi = RSI(strategy.period)
-        self._prev: float | None = None
-        self._bars = 0
-
-    def update(self, candle: Candle, context: MarketContext | None = None) -> Signal:
-        now = self._rsi.update(candle.close)
-        prev = self._prev
-        self._prev = now
-        self._bars += 1
-        s = self._s
-        if self._bars < s.warmup or now is None or prev is None:
+    def generate(self, candles: list[Candle], symbol: str | None = None) -> Signal:
+        if len(candles) < self.warmup:
             return HOLD
 
-        if prev <= s.oversold and now > s.oversold:
+        closes = [c.close for c in candles]
+        values = rsi(closes, self.period)
+        now, prev = values[-1], values[-2]
+        if now is None or prev is None:
+            return HOLD
+
+        crossed_up = prev <= self.oversold and now > self.oversold
+        crossed_down = prev >= self.overbought and now < self.overbought
+
+        if crossed_up:
             return Signal(
                 SignalType.BUY,
-                reason=f"RSI({s.period}) recovered above oversold "
-                f"{s.oversold:.0f} ({prev:.1f}->{now:.1f})",
+                reason=f"RSI({self.period}) recovered above oversold "
+                f"{self.oversold:.0f} ({prev:.1f}->{now:.1f})",
             )
-        if prev >= s.overbought and now < s.overbought:
+        if crossed_down:
             return Signal(
                 SignalType.SELL,
-                reason=f"RSI({s.period}) fell below overbought "
-                f"{s.overbought:.0f} ({prev:.1f}->{now:.1f})",
+                reason=f"RSI({self.period}) fell below overbought "
+                f"{self.overbought:.0f} ({prev:.1f}->{now:.1f})",
             )
         return HOLD

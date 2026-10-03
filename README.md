@@ -29,6 +29,10 @@ before ever touching real money.
 - **Risk management** — fractional position sizing, max-open-positions cap, per-position
   stop-loss / take-profit, a peak-tracking **trailing stop**, optional averaging-in with a
   per-symbol cap, and a portfolio drawdown kill-switch.
+- **Built for speed and scale** — strategies keep *streaming* indicator state (O(1) work per
+  bar, not a 200-bar recompute), the live loop fetches every symbol concurrently and only
+  pulls the candles it hasn't seen, and signals fire within ~2 s of each bar close. See
+  [Performance](#performance).
 - **Dependency-light core** — indicators, strategies, risk, backtester, and the paper engine
   are pure Python and unit-tested without any network or heavy dependencies.
 
@@ -47,9 +51,24 @@ before ever touching real money.
             └────────────┘                   └──────────────┘         └─────────────┘
 ```
 
-Each cycle the engine: fetches candles → marks equity to market (and checks the drawdown
-kill-switch) → applies protective exits → asks the strategy for a signal → sizes it through
+Each cycle the engine: fetches candles for **all symbols in one concurrent batch** → marks
+equity to market (and checks the drawdown kill-switch) → applies protective exits → folds
+each newly **closed** candle into the strategy's per-symbol state → sizes any signal through
 the risk manager → submits it to the broker → books the fill in the portfolio.
+
+A few properties worth knowing:
+
+- **Signals use closed bars only**, the same bars a backtest sees. A still-forming candle can
+  cross a level and un-cross it before the close; the bot never trades that. Protective
+  exits (stop-loss, trailing stop, take-profit) are the exception: they check the latest
+  price every cycle.
+- **Startup warm-up.** The first cycle loads `history_bars` of history per symbol to warm up
+  indicators; after that each poll fetches only bars newer than the last one processed
+  (usually one or two). After downtime, the backlog is folded in but never traded.
+- **Bar-aligned polling.** The loop sleeps `poll_seconds` between cycles but wakes ~2 s after
+  each bar boundary, so a closed bar is acted on promptly rather than up to a poll later.
+- **Fault isolation.** A symbol whose data request fails is skipped for that cycle; the rest
+  still trade, and its stops still apply on the next good cycle.
 
 ## Quickstart
 
@@ -103,9 +122,11 @@ mode: paper                 # paper | live
 exchange:
   name: binance             # any ccxt id: binance | bybit | coinbase | ...
   sandbox: false            # use the exchange testnet where supported
+  max_concurrency: 10       # exchange requests in flight at once (still rate-limited)
 symbols: [BTC/USDT, ETH/USDT]
 timeframe: 1h
 poll_seconds: 60
+history_bars: 500           # warm-up candles loaded per symbol at startup
 strategy:
   name: ma_crossover
   params: { fast_period: 12, slow_period: 26, ma_type: ema }
@@ -213,21 +234,44 @@ are not imported as tracked positions** — start from a clean quote balance, or
 
 ## Extending
 
-**Add a strategy** — subclass `Strategy`, implement `warmup` and `generate`, and register it:
+**Add a strategy** — subclass `Strategy`, implement `warmup` plus a per-symbol
+`StrategyState` that folds in one closed candle at a time, and register it. The streaming
+indicators in `crypto_bot.indicators.stream` (EMA, SMA, RSI, ATR, ADX, Supertrend, MACD,
+rolling highs/lows) keep this O(1) per bar:
 
 ```python
 # src/crypto_bot/strategies/my_strategy.py
 from crypto_bot.core.models import HOLD, Signal, SignalType
-from crypto_bot.strategies.base import Strategy
+from crypto_bot.indicators.stream import EMA
+from crypto_bot.strategies.base import Strategy, StrategyState
 from crypto_bot.strategies.registry import register_strategy
 
 @register_strategy
 class MyStrategy(Strategy):
     name = "my_strategy"
+
     @property
-    def warmup(self) -> int: return 50
-    def generate(self, candles): ...
+    def warmup(self) -> int:
+        return 50
+
+    def new_state(self, symbol=None):
+        return _MyState()
+
+class _MyState(StrategyState):
+    def __init__(self):
+        self.ema = EMA(50)
+
+    def update(self, candle, context=None):
+        trend = self.ema.update(candle.close)
+        if trend is not None and candle.close > trend * 1.05:
+            return Signal(SignalType.BUY, "5% above EMA(50)")
+        return HOLD
 ```
+
+Prefer something quicker to write? Implement `generate(self, candles, symbol=None)` instead
+of `new_state`, recomputing from the candle list. The engine runs it over a rolling
+200-candle window once per closed bar. That's simpler, but costs O(window) per bar. Either
+way, `strategy.generate(candles)` works for quick experiments and tests.
 
 Import it once (e.g. in `strategies/registry.py`) so the decorator runs, then reference
 `name: my_strategy` in config.
@@ -263,12 +307,45 @@ pip-compile --generate-hashes --upgrade --allow-unsafe requirements-dev.in
 ## Testing
 
 ```bash
-pytest            # 60 tests, no network or ccxt required
+pytest            # offline: no network, no exchange keys
 ruff check .      # lint
 ```
 
 The core (indicators, strategies, risk, portfolio, paper broker, engine) is tested against an
-in-memory fake exchange, so the suite is fast and offline.
+in-memory fake exchange, so the suite is fast and offline. Two suites guard the streaming
+rewrite: `test_indicator_stream.py` pins every streaming indicator to its batch counterpart
+bit-for-bit, and `test_strategy_stream.py` checks every built-in strategy emits the same
+signal on every bar as the original windowed implementation (frozen in `tests/legacy/`).
+
+## Performance
+
+Measured on one core (Python 3.11).
+
+**Backtests** (5,000 1h bars × 2 symbols, every strategy):
+
+| strategy | before | after |
+|---|---:|---:|
+| regime | 1,359 ms | 75 ms |
+| trend_ls | 1,262 ms | 68 ms |
+| supertrend | 699 ms | 51 ms |
+| macd | 450 ms | 62 ms |
+| rsi_reversion | 401 ms | 48 ms |
+| ma_crossover | 217 ms | 49 ms |
+| all ten | 4.75 s | 0.64 s |
+
+Runtime now grows linearly with history length; before, it grew with length × window.
+
+**Live cycle time** (simulated Binance spot: ccxt's real rate limiter, 120 ms per request):
+
+| symbols | before | after |
+|---:|---:|---:|
+| 10 | 1.4 s | 0.3 s |
+| 50 | 7.0 s | 1.3 s |
+| 200 | 28 s | 4.1 s |
+| 500 | 70 s | 10 s |
+
+Cycle time is now bounded by the venue's rate limit (which ccxt enforces), not by
+per-request latency. Each poll also moves ~1–2 candles per symbol instead of 200.
 
 ## Project layout
 
@@ -277,6 +354,7 @@ src/crypto_bot/
   cli.py            # command-line interface
   config.py         # YAML + env config loading & validation
   indicators/       # pure-Python SMA / EMA / RSI / stddev / Bollinger / Donchian / MACD / ATR / Supertrend / ADX
+                    #   ta.py: batch (whole-list) versions; stream.py: O(1)-per-bar streaming versions
   strategies/       # Strategy interface, registry, 8 built-in strategies
   risk/             # position sizing, stops (incl. trailing), averaging-in, drawdown kill-switch
   backtest/         # replay engine + performance metrics (Sharpe, drawdown, trade stats)

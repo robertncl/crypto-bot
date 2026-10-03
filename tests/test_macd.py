@@ -48,13 +48,22 @@ def test_rejects_nonpositive_signal():
 
 
 def test_hold_when_indicator_not_yet_defined(monkeypatch):
-    # macd()'s line/signal are provably defined at both compared bars for every input
+    # MACD's line/signal are provably defined at both compared bars for every input
     # at exactly `warmup` candles, so this guard is unreachable with well-formed data.
-    # Force it via the indicator call to prove it still holds if that ever changed.
+    # Force it via the indicator to prove it still holds if that ever changed.
     import crypto_bot.strategies.macd as mod
     from crypto_bot.core.models import Candle
 
-    monkeypatch.setattr(mod, "macd", lambda *a, **k: ([None] * 20, [None] * 20, [None] * 20))
+    class _NeverReady:
+        value = macd = signal = None
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def update(self, *_values):
+            return None
+
+    monkeypatch.setattr(mod, "MACD", _NeverReady)
     strategy = MACDMomentum(PARAMS)
     candles = [Candle(1_000_000 + i * 60_000, 10, 10, 10, 10, 1.0) for i in range(strategy.warmup)]
     assert strategy.generate(candles).type == SignalType.HOLD
