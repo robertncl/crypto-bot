@@ -11,21 +11,13 @@ requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Robert Ngo" }]
 dependencies = [
-<<<<<<< HEAD
     "ccxt>=4.5.84",
-=======
-    "ccxt>=4.5.81",
->>>>>>> 32ebd31 (chore(deps): update 2 PyPI packages (24h cooloff))
     "PyYAML>=6.0.3",
     "python-dotenv>=1.2.3",
 ]
 
 [project.optional-dependencies]
-<<<<<<< HEAD
 dev = ["pytest>=9.1.1", "ruff>=0.16.9"]
-=======
-dev = ["pytest>=9.1.1", "ruff>=0.16.8"]
->>>>>>> 32ebd31 (chore(deps): update 2 PyPI packages (24h cooloff))
 
 [project.scripts]
 crypto-bot = "crypto_bot.cli:main"
