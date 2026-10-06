@@ -149,9 +149,9 @@ attrs==26.1.0 \
     # via
     #   aiohttp
     #   ccxt
-ccxt==4.5.84 \
-    --hash=sha256:5bd072664785b20cd9bef4b57d6aa27b9ae504954043264ea03f96c366c607ad \
-    --hash=sha256:b920f7d92c0fb62873a900c96ee2cfb76ec6ffeaa7343bf5be0cc01b9b2e9617
+ccxt==4.5.85 \
+    --hash=sha256:da6b2cce40530d471bc8ecf716a3e7d709f597fca8a4a84e40e7422b31f164c0 \
+    --hash=sha256:e2e57064675779b16d174c4bb87856d4c84e237075c6240e4c0d99db931bd02b
     # via -r requirements.in
 certifi==2026.6.17 \
     --hash=sha256:024c88eeec92ca068db80f02b8b07c9cef7b9fe261d1d535abfd5abd6f6af432 \
@@ -1072,9 +1072,9 @@ typing-extensions==4.16.0 \
     #   aiohttp
     #   aiosignal
     #   ccxt
-urllib3==2.7.0 \
-    --hash=sha256:231e0ec3b63ceb14667c67be60f2f2c40a518cb38b03af60abc813da26505f4c \
-    --hash=sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897
+urllib3==2.8.0 \
+    --hash=sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3 \
+    --hash=sha256:63bf2ead4c879426ebf22ef2a781eeb4aa3b4ae798a0435506f8687fd5bb9b63
     # via
     #   ccxt
     #   requests
