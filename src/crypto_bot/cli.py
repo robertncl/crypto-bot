@@ -28,11 +28,14 @@ DEFAULT_CONFIG = "config/config.yaml"
 
 
 def main(argv: list[str] | None = None) -> int:
-    # Load API keys from .env if present (no-op if python-dotenv isn't installed).
+    # Load API keys from .env if present (no-op if python-dotenv isn't installed). Search
+    # from the working directory — where config/config.yaml is resolved too — not from
+    # wherever the package is installed, so a stray .env above site-packages can never
+    # supply credentials.
     try:
-        from dotenv import load_dotenv
+        from dotenv import find_dotenv, load_dotenv
 
-        load_dotenv()
+        load_dotenv(find_dotenv(usecwd=True))
     except ImportError:
         pass
 

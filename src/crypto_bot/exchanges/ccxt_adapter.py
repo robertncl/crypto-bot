@@ -41,7 +41,9 @@ class CCXTAdapter(ExchangeAdapter):
         sandbox: bool = False,
         options: dict | None = None,
     ) -> None:
-        if not hasattr(ccxt, exchange_id):
+        # ccxt.exchanges lists real venue ids; hasattr() would also accept any other module
+        # attribute (helpers, base classes) as an "exchange".
+        if exchange_id not in ccxt.exchanges or not hasattr(ccxt, exchange_id):
             raise ExchangeError(
                 f"unknown ccxt exchange id {exchange_id!r}. "
                 "See https://docs.ccxt.com for the list of supported ids."
@@ -140,6 +142,22 @@ class CCXTAdapter(ExchangeAdapter):
                 f"create_order failed for {request.symbol} on {self.name}: {exc}"
             ) from exc
         return self._parse_order(raw, request)
+
+    def fetch_order(self, order_id: str, request: OrderRequest) -> Order:
+        # Bybit unified accounts refuse fetchOrder unless the caller acknowledges that
+        # only the account's last 500 orders are visible — always true for an order the
+        # bot has just placed. Other venues would reject the unknown parameter.
+        params = {"acknowledged": True} if self.name == "bybit" else {}
+        try:
+            raw = self.client.fetch_order(order_id, request.symbol, params)
+        except ccxt.BaseError as exc:
+            raise ExchangeError(
+                f"fetch_order failed for {order_id} on {self.name}: {exc}"
+            ) from exc
+        order = self._parse_order(raw, request)
+        if order.id is None:
+            order.id = order_id
+        return order
 
     def cancel_order(self, order_id: str, symbol: str) -> None:
         try:

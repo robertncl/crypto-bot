@@ -72,3 +72,13 @@ def test_setup_logging_adds_a_file_handler_when_given_a_path(tmp_path):
     for h in logger.handlers:
         h.flush()
     assert "hello" in log_file.read_text()
+
+
+def test_a_new_log_file_is_readable_by_its_owner_only(tmp_path):
+    import os
+    import stat
+
+    _clean()
+    path = tmp_path / "logs" / "bot.log"
+    setup_logging("INFO", str(path))
+    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600

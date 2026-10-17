@@ -310,3 +310,16 @@ def test_main_tolerates_missing_dotenv(monkeypatch, capsys):
     monkeypatch.setitem(sys.modules, "dotenv", None)
     assert main(["version"]) == 0
     assert __version__ in capsys.readouterr().out
+
+
+def test_dotenv_is_loaded_from_the_working_directory(tmp_path, monkeypatch):
+    # Credentials come from the .env where the bot is run (alongside config/config.yaml),
+    # not from directories above wherever the package happens to be installed.
+    import os
+
+    (tmp_path / ".env").write_text("CRYPTO_BOT_TEST_KEY=from-cwd\n")
+    monkeypatch.setenv("CRYPTO_BOT_TEST_KEY", "placeholder")  # restored after the test
+    monkeypatch.delenv("CRYPTO_BOT_TEST_KEY")
+    monkeypatch.chdir(tmp_path)
+    assert main(["version"]) == 0
+    assert os.environ["CRYPTO_BOT_TEST_KEY"] == "from-cwd"
