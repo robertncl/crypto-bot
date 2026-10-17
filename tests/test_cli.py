@@ -323,3 +323,135 @@ def test_dotenv_is_loaded_from_the_working_directory(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert main(["version"]) == 0
     assert os.environ["CRYPTO_BOT_TEST_KEY"] == "from-cwd"
+
+
+# -- bot catalog ------------------------------------------------------------------
+BOT_BLOCK = """
+bot:
+  name: {name}
+  category: {category}
+  risk_level: {risk}
+  return_potential: {potential}
+  summary: Does a thing.
+  best_for: Some markets.
+  main_risk: Other markets.
+"""
+
+
+def _profiles(tmp_path, monkeypatch, bots=((1, "calm"), (4, "wild"))):
+    """A config/profiles directory in a fresh working directory."""
+    directory = tmp_path / "config" / "profiles"
+    directory.mkdir(parents=True)
+    for risk, stem in bots:
+        block = BOT_BLOCK.format(name=stem.title(), category="trend", risk=risk,
+                                 potential="high")
+        (directory / f"{stem}.yaml").write_text(VALID_CONFIG + block)
+    monkeypatch.chdir(tmp_path)
+    return directory
+
+
+def test_bots_lists_the_catalog_lowest_risk_first(tmp_path, monkeypatch, capsys):
+    _profiles(tmp_path, monkeypatch, bots=((4, "wild"), (1, "calm")))
+    assert main(["bots"]) == 0
+    out = capsys.readouterr().out
+    assert out.index("calm") < out.index("wild")
+    assert "1 very low" in out and "4 high" in out and "ma_crossover 1h" in out
+    assert "main risk" not in out  # details only on request
+
+
+def test_bots_details_and_risk_filter(tmp_path, monkeypatch, capsys):
+    _profiles(tmp_path, monkeypatch)
+    assert main(["bots", "--details", "--max-risk", "2"]) == 0
+    out = capsys.readouterr().out
+    assert "calm - Calm" in out and "main risk  Other markets." in out
+    assert "wild" not in out
+
+
+def test_bots_reports_broken_files_and_an_empty_catalog(tmp_path, monkeypatch, capsys):
+    directory = _profiles(tmp_path, monkeypatch, bots=())
+    (directory / "broken.yaml").write_text("mode: sideways\n")
+    assert main(["bots"]) == 1
+    err = capsys.readouterr().err
+    assert "skipping" in err and "broken.yaml" in err and "no bots found" in err
+
+
+def test_bot_flag_resolves_a_catalog_bot(tmp_path, monkeypatch, capsys):
+    _profiles(tmp_path, monkeypatch)
+    assert main(["validate-config", "--bot", "calm"]) == 0
+    assert "OK: config valid" in capsys.readouterr().out
+
+
+def test_unknown_bot_is_a_config_error(tmp_path, monkeypatch, capsys):
+    _profiles(tmp_path, monkeypatch)
+    assert main(["backtest", "--bot", "nope"]) == 2
+    assert "unknown bot 'nope'; available: calm, wild" in capsys.readouterr().err
+
+
+def test_bot_and_config_are_mutually_exclusive(tmp_path, monkeypatch):
+    _profiles(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit):
+        main(["run", "--bot", "calm", "--config", "x.yaml"])
+
+
+def test_every_shipped_bot_validates_through_the_cli(monkeypatch, capsys):
+    from pathlib import Path
+
+    monkeypatch.chdir(Path(__file__).resolve().parents[1])
+    for name in ("conservative", "grid", "momentum", "perp-trend"):
+        assert main(["validate-config", "--bot", name]) == 0
+    assert capsys.readouterr().out.count("OK: config valid") == 4
+
+
+def test_compare_prints_a_ranked_table_and_error_rows(tmp_path, monkeypatch, capsys):
+    from crypto_bot.backtest import Backtester
+    from crypto_bot.backtest.compare import Comparison
+
+    _profiles(tmp_path, monkeypatch)
+    calls = {}
+
+    def fake_compare(entries, since_ms, build_exchange, *, on_fetch=None):
+        calls["bots"] = [e.bot_id for e in entries]
+        on_fetch("BTC/USDT", "1h", 42)
+        good = Backtester(entries[0].config).run({"BTC/USDT": _candles(30)})
+        return [Comparison(entries[0], result=good), Comparison(entries[1], error="boom")]
+
+    monkeypatch.setattr("crypto_bot.backtest.compare.compare_bots", fake_compare)
+    monkeypatch.setattr("crypto_bot.exchanges.factory.build_exchange", lambda *a, **k: None)
+    assert main(["compare", "--days", "30"]) == 0
+    out = capsys.readouterr().out
+    assert calls["bots"] == ["calm", "wild"]
+    assert "fetched 42 1h candles for BTC/USDT" in out
+    assert "MAX DD" in out and "+0.0%" in out
+    assert "wild: boom" in out and "not a forecast" in out
+
+
+def test_compare_validates_days_and_needs_bots(tmp_path, monkeypatch, capsys):
+    _profiles(tmp_path, monkeypatch, bots=())
+    assert main(["compare", "--days", "0"]) == 2
+    assert main(["compare"]) == 1
+    assert "no bots found" in capsys.readouterr().err
+
+
+def test_bots_details_skip_empty_fields(tmp_path, monkeypatch, capsys):
+    directory = _profiles(tmp_path, monkeypatch, bots=())
+    minimal = "\nbot: {name: Bare, category: grid, risk_level: 3, return_potential: low}\n"
+    (directory / "bare.yaml").write_text(VALID_CONFIG + minimal)
+    assert main(["bots", "--details"]) == 0
+    out = capsys.readouterr().out
+    assert "bare - Bare" in out and "what" not in out and "best for" not in out
+
+
+def test_compare_skips_broken_profiles(tmp_path, monkeypatch, capsys):
+    from crypto_bot.backtest.compare import Comparison
+
+    directory = _profiles(tmp_path, monkeypatch, bots=((2, "calm"),))
+    (directory / "broken.yaml").write_text("mode: sideways\n")
+    monkeypatch.setattr(
+        "crypto_bot.backtest.compare.compare_bots",
+        lambda entries, *a, **k: [Comparison(entries[0], error="no data")],
+    )
+    monkeypatch.setattr("crypto_bot.exchanges.factory.build_exchange", lambda *a, **k: None)
+    assert main(["compare", "--max-risk", "2"]) == 0
+    captured = capsys.readouterr()
+    assert "skipping" in captured.err and "broken.yaml" in captured.err
+    assert "calm: no data" in captured.out

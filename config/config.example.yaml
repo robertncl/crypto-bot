@@ -75,6 +75,17 @@ paper:
   fee_rate: 0.001          # 0.1% taker fee
   slippage_pct: 0.0005     # 0.05% simulated slippage on market fills
 
+# Optional catalog metadata. It never changes how the bot trades, but it makes the file show
+# up in `crypto-bot bots` and `crypto-bot compare` (when it lives in config/profiles/).
+# bot:
+#   name: My Bot
+#   category: trend             # free text: trend, grid, mean-reversion, ...
+#   risk_level: 3               # 1 very low .. 5 very high
+#   return_potential: moderate  # low | moderate | high | very high | market
+#   summary: One line on what it does.
+#   best_for: The market it suits.
+#   main_risk: How it loses.
+
 logging:
   level: INFO              # DEBUG | INFO | WARNING | ERROR
   file: logs/crypto-bot.log

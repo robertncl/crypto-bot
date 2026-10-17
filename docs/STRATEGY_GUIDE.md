@@ -177,9 +177,10 @@ move together, so don't assume 5 coins = 5x safer.
 
 ## 6. The other strategies this bot ships — and choosing a risk profile
 
-You don't have to stop at MA crossover. The bot ships **eight** strategies (run
-`crypto-bot strategies` to list them) — four trend/momentum, two mean-reversion, one
-scheduled accumulator, and one ensemble that combines the families:
+You don't have to stop at MA crossover. Run `crypto-bot strategies` to list everything
+that ships. Here are the spot strategies: four trend/momentum, two mean-reversion, a grid
+trader, a scheduled accumulator, and an ensemble that combines the families. (Two more,
+for perpetual futures, are covered in [DERIVATIVES.md](DERIVATIVES.md).)
 
 **Trend-following / momentum (buy strength):**
 - **MA crossover** (`ma_crossover`) — the worked example in §4. *Balanced.*
@@ -211,6 +212,17 @@ scheduled accumulator, and one ensemble that combines the families:
   statistical stretch (2 standard deviations by default) before acting, it trades rarely on calm
   majors — the most *conservative* of the signal strategies.
 
+**Grid trading (harvest the wiggles, no direction call):**
+- **Grid** (`grid`) — the classic exchange "grid bot." Picture a ladder of price lines 2%
+  apart. Every time price falls through a rung, the bot buys one small slice; every time it
+  climbs back through a rung, it sells a slice. Each buy-then-sell round trip pockets about
+  one rung (minus fees), so it makes money from price *bouncing around*, not from guessing
+  the direction. It buys and sells a full rung apart, so a price jiggling on one line doesn't
+  churn fees. Its weakness is a one-way market. In a long slide it keeps buying until its cap,
+  then holds a losing stack. In a strong rally it sells early and watches the rest of the move.
+  Like DCA it adds to a position, so it needs `risk.allow_averaging_in: true`.
+  *Steady in ranges.*
+
 **Scheduled accumulation (buy on a clock, ignore price):**
 - **DCA / Auto-Invest** (`dca`) — the odd one out: it doesn't react to price at all. It buys a
   fixed slice every `every` candles and **holds**, averaging your entry across the whole period
@@ -237,27 +249,44 @@ scheduled accumulator, and one ensemble that combines the families:
 
 Conservative vs. aggressive isn't a single dial — it's the *combination* of which strategy, on
 what timeframe, with how much size and how tight a stop. A slow Bollinger strategy on the daily
-chart risking 5% per trade is cautious; a 1-hour breakout risking 20% is not. The bot bundles
-six ready-made recipes in [`config/profiles/`](../config/profiles/):
+chart risking 5% per trade is cautious; a 1-hour breakout risking 20% is not.
 
-| Profile | Strategy | Timeframe | Position size | Max positions | Protective exits |
-| --- | --- | --- | --- | --- | --- |
-| `conservative.yaml` | Bollinger | 1d | 5% | 2 | 5% stop / 12% take-profit |
-| `balanced.yaml` | RSI reversion | 4h | 10% | 3 | 6% stop / 15% take-profit |
-| `trend.yaml` | Supertrend | 4h | 15% | 3 | 7% stop / 21% take-profit |
-| `adaptive.yaml` | Regime ensemble | 4h | 10% | 3 | 6% stop / 5% trailing stop |
-| `aggressive.yaml` | Breakout | 1h | 20% | 5 | 8% stop / 30% take-profit |
-| `dca.yaml` | DCA / Auto-Invest | 1d | 5% (averages in) | 2 | off (accumulate & hold) |
+So the bot ships nine ready-made **bots**, each a complete recipe rated from 1 (very low
+risk) to 5 (very high). The rating mostly reflects how much of your money the bot can put to
+work at once, whether it uses stop-losses, and whether it can bet *against* the market too:
 
-Run one straight away — all six are **paper** mode, so nothing is at risk:
+| Risk | Bot | What it does | Return potential |
+| --- | --- | --- | --- |
+| 1 very low | `conservative` | Buys rare, stretched dips with tiny positions (daily chart) | low |
+| 2 low | `balanced` | Buys the bounce out of oversold RSI | moderate |
+| 2 low | `adaptive` | Switches between trend-following and dip-buying by market mood | moderate |
+| 3 moderate | `grid` | Buys every 2% step down, sells every 2% step up | moderate |
+| 3 moderate | `momentum` | Trades MACD momentum turns | high |
+| 3 moderate | `trend` | Rides Supertrend trends | high |
+| 4 high | `aggressive` | Chases breakouts with big positions on a fast chart | high |
+| 4 high | `dca` | Buys a slice every day and never sells | tracks the market |
+| 5 very high | `perp-trend` | Trades breakouts long *and* short on perpetual futures | very high |
+
+"Return potential" is how much upside the recipe *can* catch. Higher potential always comes
+with deeper drops along the way. That's the trade-off, not a free lunch. Two commands make it
+concrete:
 
 ```bash
-crypto-bot run --once --config config/profiles/conservative.yaml
+crypto-bot bots --details        # every bot, its best market, and its main risk
+crypto-bot compare --days 365    # backtest all nine on the same history, side by side
+```
+
+Run one straight away — every bot is **paper** mode, so nothing is at risk:
+
+```bash
+crypto-bot run --once --bot conservative
 ```
 
 Then read the logs, change **one** thing, and run it again. These are training wheels to learn
-from — *not* advice about what will make money. There is no "best" profile; aggressive simply
-means bigger swings in both directions.
+from — *not* advice about what will make money. There is no "best" bot: in a bear market even
+the "very high return potential" bot loses money, just more of it. Notice `dca` sits at 4: it
+feels safe because it never panics, but it also never sells, so it falls as far as the market
+does.
 
 ### Still just ideas (good next exercises)
 

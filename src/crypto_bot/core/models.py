@@ -71,10 +71,25 @@ class Candle:
 
 @dataclass(frozen=True)
 class Signal:
-    """A strategy's decision for one symbol on one bar."""
+    """A strategy's decision for one symbol on one bar.
+
+    ``fraction`` and ``reduce_only`` let a strategy scale *out* of a position instead of
+    flipping it — what a grid bot does as price climbs its ladder:
+
+    * ``fraction`` — when the signal closes an open position, the share of it to close
+      (1.0 = all of it, the default).
+    * ``reduce_only`` — the signal may only shrink or close an open position; it never
+      opens a new one or reverses into the other side, whatever ``allow_shorts`` says.
+    """
 
     type: SignalType
     reason: str = ""
+    fraction: float = 1.0
+    reduce_only: bool = False
+
+    def __post_init__(self) -> None:
+        if not 0.0 < self.fraction <= 1.0:
+            raise ValueError(f"fraction must be in (0, 1], got {self.fraction}")
 
     @property
     def is_actionable(self) -> bool:

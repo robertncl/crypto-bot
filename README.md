@@ -17,11 +17,16 @@ before ever touching real money.
 - **Paper trading by default** — simulates fills against *live* market data (with
   configurable fees and slippage). No API keys required.
 - **Live trading** — gated behind an explicit `--yes-i-understand-live` acknowledgement.
-- **Pluggable strategies** — a simple `Strategy` interface plus a registry. Ships with eight:
+- **Pluggable strategies** — a simple `Strategy` interface plus a registry. Ships with eleven:
   trend/momentum **MA crossover**, **Donchian breakout**, **MACD**, and volatility-adaptive
-  **Supertrend**; mean-reverting **RSI** and **Bollinger-band**; scheduled **DCA /
-  Auto-Invest** accumulation; and an ADX-driven **regime-switching ensemble** that routes
-  each bar to a trend or mean-reversion specialist.
+  **Supertrend**; mean-reverting **RSI** and **Bollinger-band**; a **grid** bot that
+  harvests oscillation; scheduled **DCA / Auto-Invest** accumulation; an ADX-driven
+  **regime-switching ensemble**; and two perpetual-swap strategies (long/short trend and
+  funding-rate positioning).
+- **Bot catalog** — nine ready-made bots, each rated for **risk level (1–5)** and **return
+  potential**, from a capital-preserving mean-reverter to a long/short perp trend bot.
+  `crypto-bot bots` lists them, `--bot NAME` runs one, and `crypto-bot compare` backtests
+  them all on the same history so you can see the risk/return trade-off in real numbers.
 - **Backtesting** — `crypto-bot backtest` replays any strategy/config over historical
   candles **through the exact same engine used live** and reports return vs buy-and-hold,
   CAGR, Sharpe/Sortino, max drawdown, win rate, and profit factor (fees and slippage
@@ -86,10 +91,12 @@ You can also run it as a module: `python -m crypto_bot run --once`.
 
 | Command | Description |
 | --- | --- |
-| `crypto-bot run [--once] [--mode paper\|live] [--config PATH]` | Run the trading loop. `--once` does a single cycle. |
-| `crypto-bot backtest [--days N] [--config PATH]` | Replay the configured strategy over the last N days of history and print performance metrics. |
-| `crypto-bot validate-config [--config PATH]` | Load and validate the config file. |
-| `crypto-bot balance [--config PATH]` | Show paper starting cash, or live exchange balances. |
+| `crypto-bot run [--once] [--mode paper\|live] [--config PATH \| --bot NAME]` | Run the trading loop. `--once` does a single cycle. |
+| `crypto-bot backtest [--days N] [--config PATH \| --bot NAME]` | Replay the configured strategy over the last N days of history and print performance metrics. |
+| `crypto-bot bots [--max-risk N] [--details]` | List the ready-made bots, lowest risk first, with category and return potential. |
+| `crypto-bot compare [--days N] [--max-risk N]` | Backtest every ready-made bot on the same history and rank return, drawdown and Sharpe side by side. |
+| `crypto-bot validate-config [--config PATH \| --bot NAME]` | Load and validate the config file. |
+| `crypto-bot balance [--config PATH \| --bot NAME]` | Show paper starting cash, or live exchange balances. |
 | `crypto-bot strategies` | List registered strategies. |
 | `crypto-bot version` | Print the version. |
 
@@ -126,10 +133,10 @@ See [`config/config.example.yaml`](config/config.example.yaml) for the fully-com
 
 ### Strategies
 
-Ten strategies ship built-in (list them with `crypto-bot strategies`). They cover both
-families — trend-following (buy strength) and mean-reversion (buy weakness) — plus a
-scheduled accumulator, a regime-switching ensemble that combines the two families, and two
-derivatives-oriented strategies for perpetual swaps:
+Eleven strategies ship built-in (list them with `crypto-bot strategies`). They cover both
+families — trend-following (buy strength) and mean-reversion (buy weakness) — plus a grid
+trader, a scheduled accumulator, a regime-switching ensemble that combines the two
+families, and two derivatives-oriented strategies for perpetual swaps:
 
 | `name` | Family | Temperament | Key params (defaults) |
 | --- | --- | --- | --- |
@@ -139,6 +146,7 @@ derivatives-oriented strategies for perpetual swaps:
 | `breakout` | Trend-following | Aggressive | `lookback` 20 (Donchian channel) |
 | `rsi_reversion` | Mean-reversion | Balanced / contrarian | `period` 14, `oversold` 30, `overbought` 70 |
 | `bollinger` | Mean-reversion | Conservative | `period` 20, `num_std` 2.0 |
+| `grid` | Grid / range harvesting | Steady in ranges | `spacing_pct` 0.02 (2% between lines) |
 | `dca` | Scheduled accumulation | Earn / buy-and-hold | `every` 1 (buy every N candles) |
 | `regime` | Ensemble (ADX-routed) | Adaptive | `adx_period` 14, `adx_threshold` 25, `trend`/`range` legs |
 | `trend_ls` | Trend-following (long/short) | Selective | `lookback` 20, `adx_threshold` 20, `trend_period` 100 |
@@ -151,6 +159,13 @@ trend strength with **ADX** each bar and delegates to a trend-following leg in t
 markets and a mean-reversion leg in ranging ones (both legs are ordinary registered
 strategies, configured by name).
 
+`grid` is the classic exchange **grid bot**. It lays geometric price lines `spacing_pct`
+apart: each fall through a line buys one tranche, and each rise through a line sells that
+share of the stack (a partial, *reduce-only* exit that never opens a short). Buys and sells
+sit a full step apart, so a price wobbling around one line doesn't churn fees. While it holds
+nothing, the grid trails price upward. It needs `risk.allow_averaging_in: true`, with
+`risk.max_position_pct` capping the stack.
+
 `trend_ls` and `funding_bias` target **perpetual swaps**. Enable `derivatives.allow_shorts`
 and every strategy above becomes long/short (they already emit SELL — it just stops being
 only an exit), so a downtrend becomes tradable rather than something to sit out.
@@ -161,34 +176,68 @@ equivalent. See [docs/DERIVATIVES.md](docs/DERIVATIVES.md) — including what is
 See [docs/STRATEGY_GUIDE.md](docs/STRATEGY_GUIDE.md) for how
 each one thinks and when it wins or loses.
 
-### Risk profiles
+### Bot catalog: risk levels and return potential
 
-Risk lives in the *combination* of strategy, timeframe, position sizing, and stops — not any
-one knob. Six ready-to-run profiles in [`config/profiles/`](config/profiles/) bundle
-sensible combinations so you can compare temperaments without hand-tuning:
+A *bot* is a ready-to-run recipe: a strategy, a timeframe, position sizing and stops,
+bundled in [`config/profiles/`](config/profiles/) with a `bot:` section that rates it. Risk
+lives in the *combination*, not in any one knob, so each bot is rated on the whole recipe:
 
-| Profile | Strategy | Timeframe | Size / max positions | Protective exits |
-| --- | --- | --- | --- | --- |
-| [`conservative`](config/profiles/conservative.yaml) | `bollinger` | 1d | 5% / 2 | 5% stop / 12% take-profit |
-| [`balanced`](config/profiles/balanced.yaml) | `rsi_reversion` | 4h | 10% / 3 | 6% stop / 15% take-profit |
-| [`trend`](config/profiles/trend.yaml) | `supertrend` | 4h | 15% / 3 | 7% stop / 21% take-profit |
-| [`adaptive`](config/profiles/adaptive.yaml) | `regime` (supertrend ⇄ rsi) | 4h | 10% / 3 | 6% stop / 5% trailing stop |
-| [`aggressive`](config/profiles/aggressive.yaml) | `breakout` | 1h | 20% / 5 | 8% stop / 30% take-profit |
-| [`dca`](config/profiles/dca.yaml) | `dca` | 1d | 5% / 2 (averages in) | off (accumulate & hold) |
+| Level | Rubric |
+| --- | --- |
+| 1 very low | ≤ 15% of equity deployed, tight stops, slow timeframe |
+| 2 low | ≤ 35% deployed, stops on |
+| 3 moderate | ≤ 60% deployed |
+| 4 high | up to fully deployed, or no stop-loss |
+| 5 very high | fully deployed *and* two-sided (long/short on perpetual swaps) |
 
-Backtest any of them before running it:
+| Risk | Bot (`--bot`) | Category | Return potential | Strategy · timeframe | Best for |
+| --- | --- | --- | --- | --- | --- |
+| 1 very low | `conservative` — Capital Preserver | mean-reversion | low | `bollinger` · 1d | Calm majors; learning with little at stake |
+| 2 low | `adaptive` — Regime Switcher | adaptive | moderate | `regime` · 4h | Markets that alternate trend and range |
+| 2 low | `balanced` — Swing Reverter | mean-reversion | moderate | `rsi_reversion` · 4h | Choppy, sideways markets |
+| 3 moderate | `grid` — Grid Trader | grid | moderate | `grid` · 1h | Oscillating markets with no trend |
+| 3 moderate | `momentum` — Momentum Swing | momentum | high | `macd` · 4h | Sustained swings |
+| 3 moderate | `trend` — Trend Rider | trend | high | `supertrend` · 4h | Strong, persistent trends |
+| 4 high | `aggressive` — Breakout Hunter | breakout | high | `breakout` · 1h | Volatile, trending markets |
+| 4 high | `dca` — Auto-Invest Accumulator | accumulation | market | `dca` · 1d | Long-horizon accumulation |
+| 5 very high | `perp-trend` — Perp Long/Short Trend | long-short | very high | `trend_ls` · 1h | Strong trends either way, incl. bear markets |
+
+"Return potential" describes how much upside the recipe *can* capture. It is not a
+forecast, and higher potential always comes with deeper drawdowns. `market` means the bot
+tracks the assets it holds: DCA has little timing risk but full market risk, because it never
+sells, which is why it rates 4.
 
 ```bash
-crypto-bot backtest --config config/profiles/adaptive.yaml --days 180
+crypto-bot bots --details            # the catalog, with each bot's fit and main risk
+crypto-bot backtest --bot grid --days 180
+crypto-bot compare --days 365        # every bot, same history, side by side
+crypto-bot run --once --bot conservative
 ```
 
-```bash
-crypto-bot run --once --config config/profiles/conservative.yaml
-```
+**Measured, not just labelled.** `crypto-bot compare` backtests every bot on identical
+history (fees and slippage included). A snapshot over the 365 days to 2026-10-17, a bear
+market in which buy-and-hold lost 25–38%:
 
-All three are `paper` mode — validate any of them with zero funds at risk before considering
+| Risk | Bot | Return | Buy & hold | Max drawdown |
+| --- | --- | ---: | ---: | ---: |
+| 1 | conservative | −1.8% | −25.3% | 2.2% |
+| 2 | adaptive | −8.9% | −35.3% | 10.0% |
+| 2 | balanced | −9.3% | −37.7% | 15.9% |
+| 3 | grid | −28.3% | −28.9% | 29.3% |
+| 3 | momentum | −19.4% | −35.4% | 25.6% |
+| 3 | trend | −16.4% | −36.5% | 23.7% |
+| 4 | aggressive | −29.3% | −37.0% | 38.6% |
+| 4 | dca | −32.5% | −32.0% | 55.2% |
+| 5 | perp-trend | −24.8% | −37.8% | 41.4% |
+
+Drawdown climbs with the risk level, as the ratings intend. No bot made money in that
+window, and the ranking will look different in a bull market. Re-run `compare` over several
+`--days` windows before trusting any of them.
+
+All bots are `paper` mode — validate any of them with zero funds at risk before considering
 live. They're starting points to learn from, **not** recommendations; change one thing at a
-time and watch what it does.
+time and watch what it does. To add your own, copy a profile, edit it, and give it a `bot:`
+section; `crypto-bot bots` will pick it up.
 
 ### API keys
 
@@ -281,21 +330,24 @@ src/crypto_bot/
   cli.py            # command-line interface
   config.py         # YAML + env config loading & validation
   indicators/       # pure-Python SMA / EMA / RSI / stddev / Bollinger / Donchian / MACD / ATR / Supertrend / ADX
-  strategies/       # Strategy interface, registry, 8 built-in strategies
+  strategies/       # Strategy interface, registry, 11 built-in strategies
+  catalog.py        # bot catalog: discover config/profiles bots by risk level
   risk/             # position sizing, stops (incl. trailing), averaging-in, drawdown kill-switch
-  backtest/         # replay engine + performance metrics (Sharpe, drawdown, trade stats)
+  backtest/         # replay engine, metrics (Sharpe, drawdown, trades), multi-bot compare
   exchanges/        # ExchangeAdapter interface + ccxt implementation
   core/             # models, portfolio, brokers (paper/live), engine
-config/profiles/    # ready-to-run conservative / balanced / trend / adaptive / aggressive / dca configs
+config/profiles/    # the bot catalog: 9 ready-to-run bots rated by risk level and return potential
 tests/              # offline unit + engine tests
 docs/STRATEGY_GUIDE.md   # beginner-friendly trading-strategy primer
 ```
 
 ## Roadmap
 
-- More strategies (grid trading; fixed-quote DCA). The regime ensemble, DCA/Auto-Invest,
-  MACD, Supertrend, RSI mean-reversion, Donchian breakout, and Bollinger bands are done —
-  as is the backtesting engine (`crypto-bot backtest`).
+- More strategies (fixed-quote DCA; bounded grids with fixed price ranges). Grid trading,
+  the regime ensemble, DCA/Auto-Invest, MACD, Supertrend, RSI mean-reversion, Donchian
+  breakout, and Bollinger bands are done, as are the backtester and the bot catalog.
+- A funding-carry bot, once backtests can replay historical funding rates (the
+  `funding_bias` strategy works live, but a backtest only sees the configured fallback rate).
 - Walk-forward / out-of-sample splits and parameter sweeps on top of the backtester.
 - Intrabar stop resolution in backtests (stops currently evaluate on bar closes).
 - `Decimal` money math respecting per-market precision.

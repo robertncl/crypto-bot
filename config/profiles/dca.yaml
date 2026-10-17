@@ -5,6 +5,17 @@
 # usual flip-style exits are intentionally off (see the notes on each risk knob).
 #
 # Run: crypto-bot run --config config/profiles/dca.yaml
+
+# Catalog metadata (descriptive only): `crypto-bot bots` lists it, `compare` measures it.
+bot:
+  name: Auto-Invest Accumulator
+  category: accumulation
+  risk_level: 4            # no stops, no kill-switch, stacks up to 100% of equity
+  return_potential: market # tracks BTC/ETH: low timing risk, full market risk
+  summary: Buys a fixed slice every day and holds - averaging the entry instead of timing it.
+  best_for: Long-horizon accumulation of assets you would hold anyway.
+  main_risk: A bear market. Nothing sells, so drawdowns track the market's own.
+
 mode: paper
 
 exchange:

@@ -1,0 +1,60 @@
+# ── MOMENTUM profile (MACD swing) ──────────────────────────────────────────
+# Momentum swing trading with the classic 12/26/9 MACD: buy when momentum turns
+# up (MACD crosses above its signal line), sell when it turns down. The second
+# smoothing filters some of the noise a raw price crossover would trade. A
+# trailing stop protects open profit; take-profit is off so runs can extend.
+#
+# Backtest it first, then paper-trade it:
+#   crypto-bot backtest --bot momentum --days 180
+#   crypto-bot run --bot momentum
+
+# Catalog metadata (descriptive only): `crypto-bot bots` lists it, `compare` measures it.
+bot:
+  name: Momentum Swing
+  category: momentum
+  risk_level: 3            # up to ~48% deployed (4 x 12%), stops on
+  return_potential: high
+  summary: Trades MACD signal-line crossovers on four majors, trailing stops under winners.
+  best_for: Markets that move in sustained swings rather than spikes.
+  main_risk: Choppy markets, where crossovers flip back and forth and stop out.
+
+mode: paper
+
+exchange:
+  name: binance
+  sandbox: false
+  options: {}
+
+symbols:
+  - BTC/USDT
+  - ETH/USDT
+  - SOL/USDT
+  - BNB/USDT
+
+timeframe: 4h
+poll_seconds: 60
+
+strategy:
+  name: macd
+  params:
+    fast_period: 12
+    slow_period: 26
+    signal_period: 9
+
+risk:
+  position_pct: 0.12         # 12% of equity per position
+  max_open_positions: 4
+  stop_loss_pct: 0.07
+  trailing_stop_pct: 0.08    # ratchets under the peak; the main profit-protecting exit
+  take_profit_pct: 0.0       # off: let the trailing stop end the run
+  max_drawdown_pct: 0.30
+
+paper:
+  starting_cash: 10000.0
+  quote_currency: USDT
+  fee_rate: 0.001
+  slippage_pct: 0.0005
+
+logging:
+  level: INFO
+  file: logs/crypto-bot.log

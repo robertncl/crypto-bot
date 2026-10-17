@@ -89,6 +89,10 @@ strategy:
 Fewer trades than plain `breakout` — that is the point, since a breakout system bleeds on
 false starts. Degrades gracefully to long-only if shorts are off.
 
+The [`perp-trend`](../config/profiles/perp-trend.yaml) bot is a ready-made `trend_ls`
+setup on BTC/ETH/SOL perpetuals with shorts on. It sits at risk level 5, the top of the
+catalog: `crypto-bot backtest --bot perp-trend`.
+
 ### `funding_bias` — funding-rate positioning
 
 The one edge that exists *only* on derivatives. Funding is simultaneously a crowding

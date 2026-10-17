@@ -8,6 +8,17 @@
 # Backtest it first, then paper-trade it:
 #   crypto-bot backtest --config config/profiles/adaptive.yaml --days 180
 #   crypto-bot run --config config/profiles/adaptive.yaml
+
+# Catalog metadata (descriptive only): `crypto-bot bots` lists it, `compare` measures it.
+bot:
+  name: Regime Switcher
+  category: adaptive
+  risk_level: 2            # up to ~30% deployed, hard stop plus trailing stop
+  return_potential: moderate
+  summary: ADX picks the specialist each bar - Supertrend in trends, RSI reversion in ranges.
+  best_for: Markets that alternate between trending and ranging.
+  main_risk: Regime flips mid-trade; the stops are the exits of last resort.
+
 mode: paper
 
 exchange:

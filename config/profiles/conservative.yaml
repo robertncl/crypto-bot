@@ -4,6 +4,17 @@
 # Few, high-quality trades; the goal is to survive, not to win big.
 #
 # Copy to config/config.yaml (or run: crypto-bot run --config config/profiles/conservative.yaml)
+
+# Catalog metadata (descriptive only): `crypto-bot bots` lists it, `compare` measures it.
+bot:
+  name: Capital Preserver
+  category: mean-reversion
+  risk_level: 1            # ~10% of equity deployed at most, tight stops, daily bars
+  return_potential: low
+  summary: Buys statistically stretched dips on majors with tiny positions; few trades.
+  best_for: Calm or range-bound majors; learning the bot with almost nothing at stake.
+  main_risk: A sustained downtrend (stops cap each loss at ~5% of a small position).
+
 mode: paper
 
 exchange:
