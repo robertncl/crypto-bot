@@ -195,6 +195,7 @@ time and watch what it does.
 For live mode, set per-exchange variables in `.env` (see `.env.example`):
 `BINANCE_API_KEY` / `BINANCE_API_SECRET`, `BYBIT_API_KEY` / `BYBIT_API_SECRET`,
 `COINBASE_API_KEY` / `COINBASE_API_SECRET` (+ `COINBASE_API_PASSWORD` if your key needs it).
+`.env` is read from the directory you run the bot in (or the nearest parent that has one).
 
 **Create keys with trade permission only — never enable withdrawals — and IP-restrict them.**
 
@@ -209,7 +210,10 @@ For live mode, set per-exchange variables in `.env` (see `.env.example`):
 
 Live mode seeds its cash from your real quote-currency balance. **Pre-existing coin holdings
 are not imported as tracked positions** — start from a clean quote balance, or extend
-`build_engine` to reconcile positions. The starter assumes market orders fill fully.
+`build_engine` to reconcile positions. Each live order is confirmed before it is booked: venues
+that only acknowledge an order (Bybit, Coinbase) are polled until it fills, a still-working
+order is cancelled after 10 s, and whatever actually executed (including a partial fill) is
+what the bot books.
 
 ## Extending
 
@@ -295,7 +299,7 @@ docs/STRATEGY_GUIDE.md   # beginner-friendly trading-strategy primer
 - Walk-forward / out-of-sample splits and parameter sweeps on top of the backtester.
 - Intrabar stop resolution in backtests (stops currently evaluate on bar closes).
 - `Decimal` money math respecting per-market precision.
-- Live position reconciliation from exchange state; partial-fill handling.
+- Live position reconciliation from exchange state (pre-existing holdings, restarts).
 - Persistence (SQLite) for trade history and crash recovery; notifications.
 
 ## License

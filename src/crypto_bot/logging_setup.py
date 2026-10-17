@@ -28,6 +28,9 @@ def setup_logging(level: str = "INFO", file: str | None = None) -> logging.Logge
     if file:
         path = Path(file)
         path.parent.mkdir(parents=True, exist_ok=True)
+        # Trading logs record balances, orders and raw exchange errors: create the file
+        # readable by its owner only. (An existing file keeps the mode it already has.)
+        path.touch(mode=0o600, exist_ok=True)
         file_handler = logging.FileHandler(path)
         file_handler.setFormatter(fmt)
         logger.addHandler(file_handler)

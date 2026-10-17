@@ -52,6 +52,14 @@ class ExchangeAdapter(ABC):
     def cancel_order(self, order_id: str, symbol: str) -> None:
         """Cancel an open order. Requires API keys."""
 
+    def fetch_order(self, order_id: str, request: OrderRequest) -> Order:
+        """Current state of an order placed from ``request``. Requires API keys.
+
+        Concrete so adapters that never trade live (backtest replay, test fakes) need not
+        implement it; the live broker treats the error as "fill could not be confirmed".
+        """
+        raise ExchangeError(f"{self.name} adapter cannot look up orders")
+
     def fetch_funding_rate(self, symbol: str) -> float | None:
         """Current perpetual funding rate for ``symbol``, or None if not applicable.
 

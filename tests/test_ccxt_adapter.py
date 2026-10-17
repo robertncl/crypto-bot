@@ -74,6 +74,7 @@ class FakeClient:
 @pytest.fixture
 def fake_venue(monkeypatch):
     monkeypatch.setattr(ccxt, EXCHANGE_ID, FakeClient, raising=False)
+    monkeypatch.setattr(ccxt, "exchanges", [*ccxt.exchanges, EXCHANGE_ID])
     yield EXCHANGE_ID
 
 
@@ -326,3 +327,53 @@ def test_parse_order_maps_every_ccxt_status(fake_venue, status, expected):
     raw = {"status": status, "amount": 1.0, "filled": 1.0}
     request = OrderRequest(symbol="BTC/USDT", side=OrderSide.BUY, amount=1.0)
     assert adapter._parse_order(raw, request).status == expected
+
+
+def test_non_exchange_ccxt_attributes_are_not_accepted_as_exchange_ids():
+    # `Exchange` (the base class) and helper functions are attributes of the ccxt module
+    # too; only ids listed in ccxt.exchanges are venues.
+    for not_a_venue in ("Exchange", "decimal_to_precision", "exchanges"):
+        with pytest.raises(ExchangeError, match="unknown ccxt exchange id"):
+            CCXTAdapter(not_a_venue)
+
+
+def test_fetch_order_parses_the_current_order_state(fake_venue, monkeypatch):
+    seen = {}
+
+    def _fetch_order(self, order_id, symbol, params):
+        seen.update(order_id=order_id, symbol=symbol, params=params)
+        return {"status": "closed", "amount": 2.0, "filled": 2.0, "average": 101.0,
+                "fee": {"cost": 0.2}}
+
+    monkeypatch.setattr(FakeClient, "fetch_order", _fetch_order, raising=False)
+    adapter = CCXTAdapter(fake_venue, api_key="k", secret="s")
+    request = OrderRequest(symbol="BTC/USDT", side=OrderSide.BUY, amount=2.0)
+    order = adapter.fetch_order("abc123", request)
+    assert seen == {"order_id": "abc123", "symbol": "BTC/USDT", "params": {}}
+    assert order.is_filled and order.filled == 2.0 and order.average_price == 101.0
+    assert order.id == "abc123"  # raw lacked an id: keep the one we asked about
+
+
+def test_fetch_order_acknowledges_bybits_500_order_window(monkeypatch):
+    seen = {}
+
+    def _fetch_order(self, order_id, symbol, params):
+        seen["params"] = params
+        return {"id": order_id, "status": "closed", "amount": 1.0, "filled": 1.0}
+
+    monkeypatch.setattr(ccxt.bybit, "fetch_order", _fetch_order)
+    adapter = CCXTAdapter("bybit")
+    request = OrderRequest(symbol="BTC/USDT", side=OrderSide.BUY, amount=1.0)
+    assert adapter.fetch_order("x1", request).is_filled
+    assert seen["params"] == {"acknowledged": True}
+
+
+def test_fetch_order_wraps_ccxt_errors(fake_venue, monkeypatch):
+    def _boom(self, order_id, symbol, params):
+        raise ccxt.OrderNotFound("gone")
+
+    monkeypatch.setattr(FakeClient, "fetch_order", _boom, raising=False)
+    adapter = CCXTAdapter(fake_venue)
+    request = OrderRequest(symbol="BTC/USDT", side=OrderSide.BUY, amount=1.0)
+    with pytest.raises(ExchangeError, match="fetch_order failed"):
+        adapter.fetch_order("x1", request)
