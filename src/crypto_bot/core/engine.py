@@ -163,10 +163,16 @@ class Engine:
                     else signal.type == SignalType.BUY
                 )
                 if opposes:
-                    self._close_position(symbol, f"strategy {signal.type.value} ({signal.reason})")
+                    self._close_position(
+                        symbol,
+                        f"strategy {signal.type.value} ({signal.reason})",
+                        fraction=signal.fraction,
+                    )
                 # A signal that *agrees* with the open position falls through to sizing,
                 # where allow_averaging_in decides whether to top it up (DCA) or decline.
 
+            if signal.reduce_only:
+                continue  # scale-out only: never opens, adds to, or reverses a position
             wants_short = signal.type == SignalType.SELL
             if wants_short and not self._allow_shorts:
                 continue  # spot mode: a SELL is purely an exit
@@ -264,15 +270,17 @@ class Engine:
             if paid:
                 self.log.debug("funding settled: %+.4f %s", -paid, self.portfolio.quote_currency)
 
-    def _close_position(self, symbol: str, reason: str) -> None:
+    def _close_position(self, symbol: str, reason: str, fraction: float = 1.0) -> None:
         position = self.portfolio.positions[symbol]
         # Closing a short means buying it back.
         side = OrderSide.BUY if position.is_short else OrderSide.SELL
+        # A full close sends the exact held amount, so no float dust is left behind.
+        amount = position.amount if fraction >= 1.0 else position.amount * fraction
         request = OrderRequest(
             symbol=symbol,
             side=side,
-            amount=position.amount,
-            reason=reason,
+            amount=amount,
+            reason=reason if fraction >= 1.0 else f"{reason} [{fraction:.0%} of position]",
         )
         self._submit(request)
 

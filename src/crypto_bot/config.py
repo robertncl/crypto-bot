@@ -78,6 +78,34 @@ class LoggingConfig:
     file: str | None = None
 
 
+#: Risk levels used by the bot catalog, lowest to highest.
+RISK_LEVELS = {1: "very low", 2: "low", 3: "moderate", 4: "high", 5: "very high"}
+#: Return-potential vocabulary. "market" = tracks the traded assets (buy-and-hold beta).
+RETURN_POTENTIALS = ("low", "moderate", "high", "very high", "market")
+
+
+@dataclass
+class BotProfile:
+    """Catalog metadata for a ready-made bot (the optional ``bot:`` section of a config).
+
+    Purely descriptive: it never changes how the bot trades. ``risk_level`` (1–5) and
+    ``return_potential`` are judgements about the *recipe* — exposure, stops, timeframe,
+    two-sidedness — not forecasts; ``crypto-bot compare`` measures them on real history.
+    """
+
+    name: str
+    category: str
+    risk_level: int
+    return_potential: str
+    summary: str = ""
+    best_for: str = ""
+    main_risk: str = ""
+
+    @property
+    def risk_label(self) -> str:
+        return RISK_LEVELS[self.risk_level]
+
+
 @dataclass
 class BotConfig:
     mode: str
@@ -90,6 +118,7 @@ class BotConfig:
     paper: PaperConfig
     logging: LoggingConfig
     derivatives: DerivativesConfig = field(default_factory=DerivativesConfig)
+    bot: BotProfile | None = None  # catalog metadata, for ready-made bot profiles
 
     @property
     def is_live(self) -> bool:
@@ -173,7 +202,37 @@ def _build_config(raw: dict) -> BotConfig:
         paper=paper,
         logging=logging_cfg,
         derivatives=derivatives,
+        bot=_build_bot(raw["bot"]) if raw.get("bot") is not None else None,
     )
+
+
+def _build_bot(raw: object) -> BotProfile:
+    if not isinstance(raw, dict):
+        raise ConfigError("`bot` section must be a mapping")
+    try:
+        risk_level = int(_require(raw, "risk_level", "bot.risk_level"))
+    except (TypeError, ValueError) as exc:
+        raise ConfigError("bot.risk_level must be an integer from 1 to 5") from exc
+    if risk_level not in RISK_LEVELS:
+        raise ConfigError(f"bot.risk_level must be 1-5 ({_describe_levels()}), got {risk_level}")
+    potential = str(_require(raw, "return_potential", "bot.return_potential")).lower()
+    if potential not in RETURN_POTENTIALS:
+        raise ConfigError(
+            f"bot.return_potential must be one of {list(RETURN_POTENTIALS)}, got {potential!r}"
+        )
+    return BotProfile(
+        name=str(_require(raw, "name", "bot.name")),
+        category=str(_require(raw, "category", "bot.category")).lower(),
+        risk_level=risk_level,
+        return_potential=potential,
+        summary=" ".join(str(raw.get("summary") or "").split()),
+        best_for=" ".join(str(raw.get("best_for") or "").split()),
+        main_risk=" ".join(str(raw.get("main_risk") or "").split()),
+    )
+
+
+def _describe_levels() -> str:
+    return ", ".join(f"{n} = {label}" for n, label in RISK_LEVELS.items())
 
 
 def _build_derivatives(raw: dict) -> DerivativesConfig:

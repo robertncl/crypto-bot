@@ -6,6 +6,17 @@
 # sizing, and a wide-ish stop so the trend isn't shaken out by ordinary noise.
 #
 # Run: crypto-bot run --config config/profiles/trend.yaml
+
+# Catalog metadata (descriptive only): `crypto-bot bots` lists it, `compare` measures it.
+bot:
+  name: Trend Rider
+  category: trend
+  risk_level: 3            # up to ~45% deployed, wider stops
+  return_potential: high
+  summary: Rides ATR-scaled Supertrend flips and stays in big moves far longer than an oscillator.
+  best_for: Strong, persistent trends (either a bull run or, with shorts, a bear market).
+  main_risk: Repeated small losses in sideways chop.
+
 mode: paper
 
 exchange:

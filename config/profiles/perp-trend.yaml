@@ -1,0 +1,67 @@
+# ── PERP TREND profile (long/short on perpetual futures) ───────────────────
+# The highest-risk recipe in the box. A filtered Donchian breakout (ADX strength
+# + EMA-100 regime) traded BOTH ways on perpetual swaps: long breakouts in uptrends,
+# short breakdowns in downtrends, stop-and-reverse between them. Nearly all equity
+# can be deployed, positions pay or earn funding every 8h, and a downtrend is as
+# tradable as an uptrend - which also means it can lose in both directions.
+#
+# Requires perp symbols (BASE/QUOTE:SETTLE). See docs/DERIVATIVES.md.
+#   crypto-bot backtest --bot perp-trend --days 180
+#   crypto-bot run --bot perp-trend
+
+# Catalog metadata (descriptive only): `crypto-bot bots` lists it, `compare` measures it.
+bot:
+  name: Perp Long/Short Trend
+  category: long-short
+  risk_level: 5            # up to ~90% deployed, two-sided on perps, fast 1h bars
+  return_potential: very high
+  summary: Trades filtered breakouts long AND short on BTC/ETH/SOL perpetuals.
+  best_for: Strong trends in either direction, including bear markets.
+  main_risk: Losing on both sides in chop, plus funding costs on every open position.
+
+mode: paper
+
+exchange:
+  name: binance
+  sandbox: false
+  options: {}
+
+# Perpetual swaps (note the :USDT settlement suffix) - spot pairs cannot be shorted.
+symbols:
+  - BTC/USDT:USDT
+  - ETH/USDT:USDT
+  - SOL/USDT:USDT
+
+timeframe: 1h
+poll_seconds: 60
+
+strategy:
+  name: trend_ls
+  params:
+    lookback: 20             # Donchian channel
+    adx_period: 14
+    adx_threshold: 20        # only trade breaks while the market is trending
+    trend_period: 100        # long above EMA-100, short below it
+
+derivatives:
+  allow_shorts: true         # SELL opens a short; the engine stop-and-reverses
+  funding_interval_hours: 8
+  funding_rate: 0.0001       # fallback per-interval rate for paper/backtest accrual
+
+risk:
+  position_pct: 0.30         # 30% of equity per position
+  max_open_positions: 3
+  stop_loss_pct: 0.06        # mirrors for shorts: triggers when price RISES 6%
+  trailing_stop_pct: 0.08
+  take_profit_pct: 0.0       # off: let the trailing stop end the run
+  max_drawdown_pct: 0.40
+
+paper:
+  starting_cash: 10000.0
+  quote_currency: USDT
+  fee_rate: 0.0005           # perp taker fees are typically lower than spot
+  slippage_pct: 0.0005
+
+logging:
+  level: INFO
+  file: logs/crypto-bot.log

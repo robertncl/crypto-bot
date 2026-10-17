@@ -4,6 +4,17 @@
 # default once you've understood paper trading.
 #
 # Run: crypto-bot run --config config/profiles/balanced.yaml
+
+# Catalog metadata (descriptive only): `crypto-bot bots` lists it, `compare` measures it.
+bot:
+  name: Swing Reverter
+  category: mean-reversion
+  risk_level: 2            # up to ~30% deployed, stops on
+  return_potential: moderate
+  summary: Buys the bounce out of oversold RSI on majors, sells the roll-over from overbought.
+  best_for: Choppy, sideways markets with regular swings.
+  main_risk: Strong trends, where "oversold" keeps getting more oversold.
+
 mode: paper
 
 exchange:

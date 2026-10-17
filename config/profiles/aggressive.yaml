@@ -5,6 +5,17 @@
 # this hard before believing it.
 #
 # Run: crypto-bot run --config config/profiles/aggressive.yaml
+
+# Catalog metadata (descriptive only): `crypto-bot bots` lists it, `compare` measures it.
+bot:
+  name: Breakout Hunter
+  category: breakout
+  risk_level: 4            # fully deployable (5 x 20%), fast 1h bars, wide stops
+  return_potential: high
+  summary: Chases Donchian breakouts on five pairs with large positions and wide stops.
+  best_for: Volatile, trending markets where breakouts follow through.
+  main_risk: Whipsaw - false breakouts in chop bleed fees and stop-outs.
+
 mode: paper
 
 exchange:
