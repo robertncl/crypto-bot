@@ -5,7 +5,10 @@
 # can be deployed, positions pay or earn funding every 8h, and a downtrend is as
 # tradable as an uptrend - which also means it can lose in both directions.
 #
-# Requires perp symbols (BASE/QUOTE:SETTLE). See docs/DERIVATIVES.md.
+# Requires perp symbols (BASE/QUOTE:SETTLE). See docs/DERIVATIVES.md. Before going
+# live, set leverage to 1x for these symbols ON THE EXCHANGE: the bot refuses to start
+# live if it is higher, since a levered isolated position can be liquidated before the
+# stop-loss fires.
 #   crypto-bot backtest --bot perp-trend --days 180
 #   crypto-bot run --bot perp-trend
 

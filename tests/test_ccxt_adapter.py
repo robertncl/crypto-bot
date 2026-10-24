@@ -377,3 +377,37 @@ def test_fetch_order_wraps_ccxt_errors(fake_venue, monkeypatch):
     request = OrderRequest(symbol="BTC/USDT", side=OrderSide.BUY, amount=1.0)
     with pytest.raises(ExchangeError, match="fetch_order failed"):
         adapter.fetch_order("x1", request)
+
+
+@pytest.mark.parametrize(
+    "payload,expected",
+    [
+        ({"longLeverage": 5, "shortLeverage": 20}, 20.0),  # the worse side counts
+        ({"leverage": 3}, 3.0),
+        ({"longLeverage": None, "shortLeverage": None}, None),
+        ("not a dict", None),
+    ],
+)
+def test_fetch_leverage_reports_the_highest_side(fake_venue, monkeypatch, payload, expected):
+    monkeypatch.setattr(FakeClient, "has", {"fetchLeverage": True})
+    monkeypatch.setattr(FakeClient, "fetch_leverage", lambda self, symbol: payload, raising=False)
+    adapter = CCXTAdapter(fake_venue, api_key="k", secret="s")
+    assert adapter.fetch_leverage("BTC/USDT:USDT") == expected
+
+
+def test_fetch_leverage_is_none_when_unsupported_or_failing(fake_venue, monkeypatch):
+    adapter = CCXTAdapter(fake_venue)
+    assert adapter.fetch_leverage("BTC/USDT:USDT") is None  # venue lacks fetchLeverage
+
+    def _boom(self, symbol):
+        raise ccxt.AuthenticationError("bad key")
+
+    monkeypatch.setattr(FakeClient, "has", {"fetchLeverage": True})
+    monkeypatch.setattr(FakeClient, "fetch_leverage", _boom, raising=False)
+    assert adapter.fetch_leverage("BTC/USDT:USDT") is None
+
+
+def test_base_adapter_reports_unknown_leverage():
+    from crypto_bot.exchanges.base import ExchangeAdapter
+
+    assert ExchangeAdapter.fetch_leverage(None, "BTC/USDT:USDT") is None

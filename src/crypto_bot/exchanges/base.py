@@ -60,6 +60,14 @@ class ExchangeAdapter(ABC):
         """
         raise ExchangeError(f"{self.name} adapter cannot look up orders")
 
+    def fetch_leverage(self, symbol: str) -> float | None:
+        """The account's leverage setting for a derivatives ``symbol``, or None if unknown.
+
+        Concrete for the same reason as :meth:`fetch_funding_rate`: spot venues and fakes
+        have no such setting. Requires API keys where the venue supports it.
+        """
+        return None
+
     def fetch_funding_rate(self, symbol: str) -> float | None:
         """Current perpetual funding rate for ``symbol``, or None if not applicable.
 

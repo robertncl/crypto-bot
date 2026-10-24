@@ -143,6 +143,25 @@ class CCXTAdapter(ExchangeAdapter):
             ) from exc
         return self._parse_order(raw, request)
 
+    def fetch_leverage(self, symbol: str) -> float | None:
+        """Highest of the long/short leverage the account has set for ``symbol``.
+
+        None when the venue cannot report it or the lookup fails: the caller decides how
+        cautious to be about an unverifiable setting.
+        """
+        if not self.client.has.get("fetchLeverage"):
+            return None
+        try:
+            info = self.client.fetch_leverage(symbol)
+        except ccxt.BaseError:
+            return None
+        values = [
+            float(info[key])
+            for key in ("longLeverage", "shortLeverage", "leverage")
+            if isinstance(info, dict) and info.get(key) is not None
+        ]
+        return max(values) if values else None
+
     def fetch_order(self, order_id: str, request: OrderRequest) -> Order:
         # Bybit unified accounts refuse fetchOrder unless the caller acknowledges that
         # only the account's last 500 orders are visible — always true for an order the

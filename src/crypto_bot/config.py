@@ -62,6 +62,11 @@ class DerivativesConfig:
     # unavailable. Positive = longs pay shorts. 0.0001 (1bp/8h) is roughly the long-run
     # crypto average, which works out to ~11%/yr paid by longs.
     funding_rate: float = 0.0
+    # The bot sizes and stops positions as if they were unlevered (1x). In live mode it
+    # refuses to trade a perp whose *exchange-side* leverage is above 1x, because with
+    # isolated margin the venue can liquidate the position before the bot's stop-loss is
+    # ever reached. Set true only if you understand that risk (e.g. cross margin).
+    allow_exchange_leverage: bool = False
 
 
 @dataclass
@@ -240,6 +245,7 @@ def _build_derivatives(raw: dict) -> DerivativesConfig:
         allow_shorts=bool(raw.get("allow_shorts", False)),
         funding_interval_hours=float(raw.get("funding_interval_hours", 8.0)),
         funding_rate=float(raw.get("funding_rate", 0.0)),
+        allow_exchange_leverage=bool(raw.get("allow_exchange_leverage", False)),
     )
     if cfg.funding_interval_hours <= 0:
         raise ConfigError("derivatives.funding_interval_hours must be positive")

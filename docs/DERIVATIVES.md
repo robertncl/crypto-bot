@@ -128,6 +128,16 @@ position through a drawdown that would have been force-closed in reality, turnin
 loss into a winning trade. A leverage knob without liquidation is not a feature, it is a
 way to produce confidently wrong backtests.
 
+**Your exchange's leverage setting still applies live.** Not modelling leverage doesn't
+switch it off at the venue: Binance, Bybit and OKX futures accounts carry a per-symbol
+leverage setting, often 10–20× by default. With isolated margin at 20×, a ~5% adverse move
+liquidates the position. That happens *before* a 6% stop-loss can fire, and it costs the
+position's whole margin. So in live mode the bot reads the leverage of every perp it trades
+and **refuses to start** if any is above 1×. Set 1× on the exchange for those symbols. If
+the venue can't report leverage, the bot warns and starts anyway, so check it yourself.
+`derivatives.allow_exchange_leverage: true` overrides the check, for example if you
+deliberately trade cross margin and accept the risk.
+
 **Delta-neutral / multi-leg positions.** The portfolio holds one position per symbol, so
 a hedged spot-vs-perp carry trade cannot be expressed.
 

@@ -329,6 +329,7 @@ def build_engine(config: BotConfig, logger: logging.Logger | None = None) -> Eng
     risk = RiskManager(config.risk)
 
     if config.is_live:
+        _check_exchange_leverage(config, exchange, markets, log)
         balances = exchange.fetch_balance()
         cash = balances.get(config.paper.quote_currency, 0.0)
         log.warning(
@@ -361,6 +362,47 @@ def build_engine(config: BotConfig, logger: logging.Logger | None = None) -> Eng
             slippage_pct=config.paper.slippage_pct,
         )
     return engine
+
+
+def _check_exchange_leverage(
+    config: BotConfig, exchange: ExchangeAdapter, markets: dict, log: logging.Logger
+) -> None:
+    """Refuse to trade perps live while the exchange-side leverage is above 1x.
+
+    The portfolio, position sizing and stops all assume unlevered positions. The venue's
+    own per-symbol leverage setting still applies to real orders, though, and with
+    isolated margin at e.g. 20x a ~5% adverse move liquidates the position — before a
+    6% stop-loss could ever fire. So any contract market above 1x stops startup, unless
+    ``derivatives.allow_exchange_leverage`` says the risk is understood.
+    """
+    contracts = [s for s in config.symbols if (markets.get(s) or {}).get("contract")]
+    levered: list[str] = []
+    for symbol in contracts:
+        leverage = exchange.fetch_leverage(symbol)
+        if leverage is None:
+            log.warning(
+                "could not read %s leverage on %s; make sure it is set to 1x — the bot's "
+                "stops assume unlevered positions",
+                symbol, exchange.name,
+            )
+        elif leverage > 1:
+            levered.append(f"{symbol} ({leverage:g}x)")
+    if not levered:
+        return
+    if config.derivatives.allow_exchange_leverage:
+        log.warning(
+            "trading with exchange-side leverage above 1x: %s. The venue may liquidate "
+            "a position before the bot's stop-loss fires.",
+            ", ".join(levered),
+        )
+        return
+    raise ExchangeError(
+        f"exchange-side leverage is above 1x for {', '.join(levered)} on {exchange.name}. "
+        "The bot sizes and stops positions as if unlevered, and with isolated margin the "
+        "exchange can liquidate a levered position before the stop-loss fires. Set "
+        "leverage to 1x for these symbols on the exchange, or set "
+        "derivatives.allow_exchange_leverage: true if you accept that risk."
+    )
 
 
 def _validate_symbols(symbols: list[str], markets: dict, log: logging.Logger) -> None:
