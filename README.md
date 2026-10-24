@@ -262,7 +262,9 @@ are not imported as tracked positions** — start from a clean quote balance, or
 `build_engine` to reconcile positions. Each live order is confirmed before it is booked: venues
 that only acknowledge an order (Bybit, Coinbase) are polled until it fills, a still-working
 order is cancelled after 10 s, and whatever actually executed (including a partial fill) is
-what the bot books.
+what the bot books. For perpetual futures, set the exchange's leverage to 1× for every symbol
+you trade. The bot refuses to start live otherwise (see
+[docs/DERIVATIVES.md](docs/DERIVATIVES.md)).
 
 ## Extending
 

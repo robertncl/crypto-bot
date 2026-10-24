@@ -108,3 +108,74 @@ def test_validate_symbols_noop_with_no_market_metadata():
 
 def test_validate_symbols_passes_when_all_symbols_are_known():
     _validate_symbols(["BTC/USDT"], {"BTC/USDT": {}}, __import__("logging").getLogger("test"))
+
+
+# -- exchange-side leverage on perps (live only) ----------------------------------
+PERP = "BTC/USDT:USDT"
+
+
+class _PerpExchange(_FakeExchange):
+    def __init__(self, leverage):
+        super().__init__(markets={PERP: {"contract": True}, "ETH/USDT": {"contract": False}},
+                         balance={"USDT": 500.0})
+        self.leverage = leverage
+        self.asked: list[str] = []
+
+    def fetch_leverage(self, symbol):
+        self.asked.append(symbol)
+        return self.leverage
+
+
+def _perp_config(mode="live", **derivatives) -> BotConfig:
+    config = _config(mode=mode)
+    config.symbols = [PERP, "ETH/USDT"]
+    config.derivatives = DerivativesConfig(allow_shorts=True, **derivatives)
+    return config
+
+
+def _build(monkeypatch, exchange, config):
+    monkeypatch.setattr("crypto_bot.core.engine.build_exchange", lambda *a, **k: exchange)
+    return build_engine(config)
+
+
+def test_live_perps_above_1x_exchange_leverage_refuse_to_start(monkeypatch):
+    exchange = _PerpExchange(leverage=20.0)
+    with pytest.raises(ExchangeError, match=r"BTC/USDT:USDT \(20x\).*liquidate.*1x"):
+        _build(monkeypatch, exchange, _perp_config())
+    assert exchange.asked == [PERP]  # only contract markets are checked
+
+
+def test_live_perps_at_1x_start_normally(monkeypatch):
+    engine = _build(monkeypatch, _PerpExchange(leverage=1.0), _perp_config())
+    assert isinstance(engine.broker, LiveBroker)
+
+
+def test_exchange_leverage_can_be_explicitly_accepted(monkeypatch, caplog):
+    config = _perp_config(allow_exchange_leverage=True)
+    engine = _build(monkeypatch, _PerpExchange(leverage=10.0), config)
+    assert isinstance(engine.broker, LiveBroker)
+    assert "leverage above 1x" in caplog.text
+
+
+def test_unreadable_exchange_leverage_warns_and_starts(monkeypatch, caplog):
+    engine = _build(monkeypatch, _PerpExchange(leverage=None), _perp_config())
+    assert isinstance(engine.broker, LiveBroker)
+    assert "could not read BTC/USDT:USDT leverage" in caplog.text
+
+
+def test_paper_mode_never_checks_exchange_leverage(monkeypatch):
+    exchange = _PerpExchange(leverage=50.0)
+    engine = _build(monkeypatch, exchange, _perp_config(mode="paper"))
+    assert isinstance(engine.broker, PaperBroker) and exchange.asked == []
+
+
+def test_allow_exchange_leverage_is_parsed_from_config(tmp_path):
+    from crypto_bot.config import load_config
+
+    path = tmp_path / "c.yaml"
+    path.write_text(
+        "exchange: {name: binance}\nsymbols: [BTC/USDT]\nstrategy: {name: dca}\n"
+        "derivatives: {allow_exchange_leverage: true}\n"
+    )
+    assert load_config(path).derivatives.allow_exchange_leverage is True
+    assert DerivativesConfig().allow_exchange_leverage is False
