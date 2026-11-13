@@ -188,3 +188,47 @@ def test_non_mapping_exchange_section_is_rejected(tmp_path):
     )
     with pytest.raises(ConfigError, match="exchange.*mapping"):
         load_config(_write(tmp_path, raw))
+
+
+def test_volatility_risk_settings_default_off_and_parse(tmp_path):
+    risk = load_config(_write(tmp_path, VALID)).risk
+    assert (risk.atr_stop_mult, risk.atr_trailing_mult, risk.risk_per_trade_pct) == (0, 0, 0)
+    assert (risk.trend_filter_period, risk.drawdown_cooldown_days, risk.atr_period) == (0, 0, 14)
+
+    raw = VALID.replace("  max_open_positions: 4\n", """  max_open_positions: 4
+  atr_period: 10
+  atr_stop_mult: 3.0
+  atr_trailing_mult: 4.0
+  risk_per_trade_pct: 0.01
+  trend_filter_period: 200
+  drawdown_cooldown_days: 30
+""")
+    risk = load_config(_write(tmp_path, raw)).risk
+    assert (risk.atr_period, risk.atr_stop_mult, risk.atr_trailing_mult) == (10, 3.0, 4.0)
+    assert (risk.risk_per_trade_pct, risk.trend_filter_period) == (0.01, 200)
+    assert risk.drawdown_cooldown_days == 30
+
+
+@pytest.mark.parametrize(
+    "extra,match",
+    [
+        ("  atr_stop_mult: -1\n", "atr_stop_mult"),
+        ("  trend_filter_period: -5\n", "trend_filter_period"),
+        ("  atr_period: 0\n", "atr_period"),
+        ("  risk_per_trade_pct: 0.01\n", "needs risk.atr_stop_mult"),
+        ("  risk_per_trade_pct: 0.5\n  atr_stop_mult: 3\n", "unsafe"),
+        ("  trend_filter_period: 5000\n", "trend_filter_period must be <= 900"),
+    ],
+)
+def test_volatility_risk_settings_are_validated(tmp_path, extra, match):
+    raw = VALID.replace("  max_open_positions: 4\n", "  max_open_positions: 4\n" + extra)
+    with pytest.raises(ConfigError, match=match):
+        load_config(_write(tmp_path, raw))
+
+
+def test_signal_on_close_parses_and_needs_a_known_timeframe(tmp_path):
+    assert load_config(_write(tmp_path, VALID)).signal_on_close is False
+    assert load_config(_write(tmp_path, VALID + "signal_on_close: true\n")).signal_on_close
+    raw = VALID.replace("timeframe: 1h", "timeframe: 1fortnight") + "signal_on_close: true\n"
+    with pytest.raises(ConfigError, match="signal_on_close: unsupported timeframe"):
+        load_config(_write(tmp_path, raw))

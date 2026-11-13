@@ -1,20 +1,22 @@
 # ── AGGRESSIVE risk profile ────────────────────────────────────────────────
-# Momentum-chasing: Donchian breakouts on a fast timeframe across more (and
-# higher-beta) pairs, with large positions and wide stops so the occasional big
-# trend pays for the frequent whipsaws. High risk, high variance — paper-trade
-# this hard before believing it.
+# Momentum-chasing: Donchian breakouts across five pairs (including higher-beta
+# alts) with large positions, held until the opposite breakout. On 4h bars - the
+# 1h version traded so often that fees consumed more than it earned. No take-profit:
+# the occasional big trend has to pay for the frequent false starts. High risk,
+# high variance - paper-trade this hard before believing it.
 #
-# Run: crypto-bot run --config config/profiles/aggressive.yaml
+#   crypto-bot backtest --bot aggressive --days 365
+#   crypto-bot run --bot aggressive
 
 # Catalog metadata (descriptive only): `crypto-bot bots` lists it, `compare` measures it.
 bot:
   name: Breakout Hunter
   category: breakout
-  risk_level: 4            # fully deployable (5 x 20%), fast 1h bars, wide stops
-  return_potential: high
-  summary: Chases Donchian breakouts on five pairs with large positions and wide stops.
+  risk_level: 4            # fully deployable (5 x 20%), long-only, trend-filtered
+  return_potential: very high
+  summary: Chases 20-bar breakouts on five pairs with large positions, held until they fail.
   best_for: Volatile, trending markets where breakouts follow through.
-  main_risk: Whipsaw - false breakouts in chop bleed fees and stop-outs.
+  main_risk: Deep drawdowns - whipsaw in chop, and a fully invested book when a bull run ends.
 
 mode: paper
 
@@ -31,9 +33,10 @@ symbols:
   - BNB/USDT
   - XRP/USDT
 
-# Fast timeframe — more breakouts, more noise, more trades.
-timeframe: 1h
+# 4h bars: a quarter of the trades of the 1h chart, and a real edge left after fees.
+timeframe: 4h
 poll_seconds: 60
+signal_on_close: true     # decide once per completed candle, exactly as a backtest does
 
 strategy:
   name: breakout           # buy new highs, sell new lows
@@ -43,9 +46,12 @@ strategy:
 risk:
   position_pct: 0.20       # 20% of equity per position — concentrated bets
   max_open_positions: 5    # fully deployed across all symbols
-  stop_loss_pct: 0.08      # wider stop to let breakouts breathe
-  take_profit_pct: 0.30    # let winners run (3.75:1 reward:risk)
+  stop_loss_pct: 0.0       # off: replaced by the volatility-scaled stop below
+  atr_stop_mult: 3.0       # disaster stop 3 ATRs below entry
+  take_profit_pct: 0.0     # off: winners run until the 20-bar low breaks
+  trend_filter_period: 200 # only buy breakouts above the 200-bar (~33-day) average
   max_drawdown_pct: 0.40   # tolerate a deep drawdown before halting
+  drawdown_cooldown_days: 30 # re-arm the kill-switch after a 30-day pause
 
 paper:
   starting_cash: 10000.0

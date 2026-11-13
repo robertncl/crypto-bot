@@ -57,3 +57,33 @@ def test_hold_when_indicator_not_yet_defined(make_candles, monkeypatch):
     strategy = RSIReversion(PARAMS)
     candles = make_candles([10] * strategy.warmup)
     assert strategy.generate(candles).type == SignalType.HOLD
+
+
+# -- exit_rsi ---------------------------------------------------------------------
+UP_THROUGH_50 = [10, 10.1, 10.0, 9.9, 10.0, 9.8, 9.7, 9.75, 9.95]  # RSI(5): 34.6 -> 56.0
+DOWN_THROUGH_40 = [10, 9.9, 10.0, 10.1, 10.0, 10.2, 10.3, 10.25, 9.98]  # RSI(5): 65.4 -> 39.5
+RISING = [10, 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7]  # RSI(5) pinned at 100
+
+
+def test_exit_rsi_closes_a_long_when_rsi_recovers_to_the_level(make_candles):
+    strategy = RSIReversion({"period": 5, "oversold": 30, "overbought": 70, "exit_rsi": 50})
+    signal = strategy.generate(make_candles(UP_THROUGH_50))
+    assert signal.type == SignalType.SELL and signal.reduce_only
+    assert "recovered to 50" in signal.reason
+
+
+def test_exit_rsi_covers_a_short_at_the_mirror_level(make_candles):
+    strategy = RSIReversion({"period": 5, "oversold": 30, "overbought": 70, "exit_rsi": 60})
+    signal = strategy.generate(make_candles(DOWN_THROUGH_40))  # mirror of 60 is 40
+    assert signal.type == SignalType.BUY and signal.reduce_only
+    assert "fell back to 40" in signal.reason
+
+
+def test_exit_rsi_is_off_by_default_and_validated(make_candles):
+    plain = RSIReversion({"period": 5, "oversold": 30, "overbought": 70})
+    assert plain.generate(make_candles(UP_THROUGH_50)).type == SignalType.HOLD
+    quiet = RSIReversion({"period": 5, "oversold": 30, "overbought": 70, "exit_rsi": 50})
+    assert quiet.generate(make_candles(RISING)).type == SignalType.HOLD  # no level crossed
+    for bad in (20, 80, 30, 70):
+        with pytest.raises(ValueError, match="exit_rsi"):
+            RSIReversion({"oversold": 30, "overbought": 70, "exit_rsi": bad})

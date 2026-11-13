@@ -1,22 +1,21 @@
 # ── MOMENTUM profile (MACD swing) ──────────────────────────────────────────
-# Momentum swing trading with the classic 12/26/9 MACD: buy when momentum turns
-# up (MACD crosses above its signal line), sell when it turns down. The second
-# smoothing filters some of the noise a raw price crossover would trade. A
-# trailing stop protects open profit; take-profit is off so runs can extend.
+# Momentum swing trading with the classic 12/26/9 MACD on daily bars: buy when
+# momentum turns up (MACD crosses above its signal line), sell when it turns down.
+# Daily bars cut the trade count ~6x versus 4h bars, which is the difference between
+# paying away the edge in fees and keeping it. Entries need a long-run uptrend.
 #
-# Backtest it first, then paper-trade it:
-#   crypto-bot backtest --bot momentum --days 180
+#   crypto-bot backtest --bot momentum --days 365
 #   crypto-bot run --bot momentum
 
 # Catalog metadata (descriptive only): `crypto-bot bots` lists it, `compare` measures it.
 bot:
   name: Momentum Swing
   category: momentum
-  risk_level: 3            # up to ~48% deployed (4 x 12%), stops on
+  risk_level: 3            # up to ~48% deployed (4 x 12%), long-only, trend-filtered
   return_potential: high
-  summary: Trades MACD signal-line crossovers on four majors, trailing stops under winners.
+  summary: Trades daily MACD signal-line crossovers on four majors in a long-run uptrend.
   best_for: Markets that move in sustained swings rather than spikes.
-  main_risk: Choppy markets, where crossovers flip back and forth and stop out.
+  main_risk: Choppy markets, where crossovers flip back and forth.
 
 mode: paper
 
@@ -31,8 +30,9 @@ symbols:
   - SOL/USDT
   - BNB/USDT
 
-timeframe: 4h
+timeframe: 1d
 poll_seconds: 60
+signal_on_close: true     # decide once per completed candle, exactly as a backtest does
 
 strategy:
   name: macd
@@ -44,10 +44,13 @@ strategy:
 risk:
   position_pct: 0.12         # 12% of equity per position
   max_open_positions: 4
-  stop_loss_pct: 0.07
-  trailing_stop_pct: 0.08    # ratchets under the peak; the main profit-protecting exit
-  take_profit_pct: 0.0       # off: let the trailing stop end the run
+  stop_loss_pct: 0.0         # off: replaced by the volatility-scaled stop below
+  atr_stop_mult: 3.0         # disaster stop 3 ATRs below entry
+  trailing_stop_pct: 0.0     # off: a fixed % trail exits inside normal swings
+  take_profit_pct: 0.0       # off: the MACD cross-down ends the trade
+  trend_filter_period: 200   # only buy while price is above its 200-day average
   max_drawdown_pct: 0.30
+  drawdown_cooldown_days: 30 # re-arm the kill-switch after a 30-day pause
 
 paper:
   starting_cash: 10000.0

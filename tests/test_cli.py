@@ -455,3 +455,35 @@ def test_compare_skips_broken_profiles(tmp_path, monkeypatch, capsys):
     captured = capsys.readouterr()
     assert "skipping" in captured.err and "broken.yaml" in captured.err
     assert "calm: no data" in captured.out
+
+
+def test_backtest_fetches_warm_up_history_and_trades_only_the_requested_window(
+    tmp_path, monkeypatch, capsys
+):
+    import time
+
+    class FakeExchange:
+        def close(self):
+            pass
+
+    hour = 3_600_000
+    now = int(time.time() * 1000)
+    asked = {}
+
+    def fake_fetch(exchange, symbol, timeframe, since_ms, **_k):
+        asked["since"] = since_ms
+        first = now - 400 * hour
+        return [Candle(first + i * hour, 100.0, 100.0, 100.0, 100.0, 1.0) for i in range(400)]
+
+    monkeypatch.setattr(
+        "crypto_bot.exchanges.factory.build_exchange", lambda *a, **k: FakeExchange()
+    )
+    monkeypatch.setattr("crypto_bot.backtest.fetch_history", fake_fetch)
+    assert main(["backtest", "--config", _write(tmp_path), "--days", "2"]) == 0
+    # 2 days of 1h candles were requested, plus 200 candles of warm-up before them.
+    assert now - asked["since"] == pytest.approx((48 + 200) * hour, abs=5_000)
+    # The command reads the clock just after this test does, so the window is 47-48 bars:
+    # the 2 days asked for, not the 400 candles that were downloaded.
+    import re
+
+    assert re.search(r"\((47|48) bars of 1h\)", capsys.readouterr().out)

@@ -64,3 +64,36 @@ def test_hold_when_channel_not_yet_defined(make_candles, monkeypatch):
     strategy = Breakout(PARAMS)
     candles = make_candles([10] * strategy.warmup)
     assert strategy.generate(candles).type == SignalType.HOLD
+
+
+# -- exit_lookback ------------------------------------------------------------------
+def test_shorter_exit_channel_closes_a_long_before_the_full_reversal(make_candles):
+    strategy = Breakout({"lookback": 6, "exit_lookback": 2})
+    # Above the 6-bar low (5) but below the 2-bar low (9): an exit, not a reversal.
+    signal = strategy.generate(make_candles([5, 8, 10, 12, 10, 9, 8.5]))
+    assert signal.type == SignalType.SELL and signal.reduce_only
+    assert "2-bar exit low" in signal.reason
+    # The same candles with no exit channel are simply held.
+    assert Breakout({"lookback": 6}).generate(make_candles([5, 8, 10, 12, 10, 9, 8.5])).type == (
+        SignalType.HOLD
+    )
+
+
+def test_shorter_exit_channel_covers_a_short(make_candles):
+    strategy = Breakout({"lookback": 6, "exit_lookback": 2})
+    signal = strategy.generate(make_candles([12, 9, 7, 5, 7, 8, 8.5]))
+    assert signal.type == SignalType.BUY and signal.reduce_only
+    assert "2-bar exit high" in signal.reason
+
+
+def test_full_breakouts_still_take_priority_and_quiet_bars_hold(make_candles):
+    strategy = Breakout({"lookback": 6, "exit_lookback": 2})
+    entry = strategy.generate(make_candles([5, 8, 10, 12, 10, 9, 13]))
+    assert entry.type == SignalType.BUY and not entry.reduce_only
+    assert strategy.generate(make_candles([5, 8, 10, 12, 10, 9, 9.5])).type == SignalType.HOLD
+
+
+def test_exit_lookback_must_not_exceed_lookback():
+    for bad in (0, 7):
+        with pytest.raises(ValueError, match="exit_lookback"):
+            Breakout({"lookback": 6, "exit_lookback": bad})

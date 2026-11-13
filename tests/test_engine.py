@@ -340,3 +340,19 @@ def test_run_once_logs_cycle_summary_when_info_enabled():
     engine.log.setLevel(logging.INFO)
 
     engine.run_once()  # must not raise while building/logging the snapshot
+
+
+def test_on_fill_reports_only_fills_the_portfolio_booked():
+    exchange = FakeExchange([10, 9, 8, 7, 6, 5, 7, 10])
+    engine = _engine(exchange, _config())
+    booked = []
+    engine.on_fill = booked.append
+    engine._last_prices["BTC/USDT"] = 10.0
+
+    good = engine._submit(OrderRequest(symbol="BTC/USDT", side=OrderSide.BUY, amount=1.0))
+    # Far more than cash can cover: the paper broker fills it, the portfolio refuses it.
+    refused = engine._submit(
+        OrderRequest(symbol="BTC/USDT", side=OrderSide.BUY, amount=1_000_000.0)
+    )
+    assert good.is_filled and refused.is_filled
+    assert booked == [good]

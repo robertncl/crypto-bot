@@ -66,3 +66,29 @@ def test_hold_when_bands_not_yet_defined(make_candles, monkeypatch):
     strategy = BollingerReversion(PARAMS)
     candles = make_candles([10] * strategy.warmup)
     assert strategy.generate(candles).type == SignalType.HOLD
+
+
+# -- exit_on_mean -------------------------------------------------------------------
+def test_exit_on_mean_sells_reduce_only_when_price_reverts_above_the_average(make_candles):
+    strategy = BollingerReversion({"period": 5, "num_std": 2.0, "exit_on_mean": True})
+    # Flat at 10, a dip to 9 (below the mean), then back above the 5-bar average.
+    signal = strategy.generate(make_candles([10, 10, 10, 10, 9, 9.99]))
+    assert signal.type == SignalType.SELL and signal.reduce_only
+    assert "reverted above the Bollinger mean" in signal.reason
+
+
+def test_exit_on_mean_covers_reduce_only_when_price_reverts_below_the_average(make_candles):
+    strategy = BollingerReversion({"period": 5, "num_std": 2.0, "exit_on_mean": True})
+    signal = strategy.generate(make_candles([10, 10, 10, 10, 11, 10.01]))
+    assert signal.type == SignalType.BUY and signal.reduce_only
+
+
+def test_exit_on_mean_is_off_by_default_and_band_signals_take_priority(make_candles):
+    crossing = make_candles([10, 10, 10, 10, 9, 9.99])
+    assert BollingerReversion({"period": 5}).generate(crossing).type == SignalType.HOLD
+
+    # A close that pierces the lower band is still an (unrestricted) entry signal.
+    strategy = BollingerReversion({"period": 5, "num_std": 1.0, "exit_on_mean": True})
+    pierce = strategy.generate(make_candles([10, 10.2, 9.9, 10.1, 10, 9.0]))
+    assert pierce.type == SignalType.BUY and not pierce.reduce_only
+    assert strategy.generate(make_candles([10] * 6)).type == SignalType.HOLD

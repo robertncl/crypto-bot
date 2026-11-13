@@ -265,11 +265,49 @@ def test_trades_from_orders_skips_unfilled_and_zero_fill_orders():
     assert trades[0].pnl == pytest.approx(10.0)
 
 
-def test_trades_from_orders_ignores_a_sell_with_no_tracked_lot():
-    # A sell for a symbol never bought (shouldn't happen in a real backtest, but the
-    # pairing logic must not misattribute it to some other symbol's lot).
+def test_a_sell_with_nothing_held_opens_a_short_not_a_trade():
+    # A lone SELL is the opening leg of a short: nothing is closed, so no trade yet.
     orders = [_order(OrderSide.SELL, 1.0, 100.0)]
     assert trades_from_orders(orders) == []
+
+
+def test_short_round_trips_are_scored_with_the_right_sign():
+    winner = trades_from_orders([
+        _order(OrderSide.SELL, 2.0, 100.0, fee=0.2),  # short 2 @ 100
+        _order(OrderSide.BUY, 2.0, 90.0, fee=0.18),   # cover @ 90: +20 gross
+    ])
+    assert len(winner) == 1 and winner[0].side == "short"
+    assert winner[0].entry_price == 100.0 and winner[0].exit_price == 90.0
+    assert winner[0].pnl == pytest.approx(20.0 - 0.2 - 0.18)
+
+    loser = trades_from_orders([
+        _order(OrderSide.SELL, 1.0, 100.0),
+        _order(OrderSide.BUY, 1.0, 110.0),  # covered higher: a loss
+    ])
+    assert loser[0].pnl == pytest.approx(-10.0) and loser[0].return_pct == pytest.approx(-0.10)
+
+
+def test_shorts_average_in_and_cover_in_parts():
+    trades = trades_from_orders([
+        _order(OrderSide.SELL, 1.0, 100.0),
+        _order(OrderSide.SELL, 1.0, 110.0),  # adds to the short: average entry 105
+        _order(OrderSide.BUY, 0.5, 95.0),    # covers a quarter
+        _order(OrderSide.BUY, 1.5, 100.0),   # covers the rest
+    ])
+    assert [t.amount for t in trades] == [0.5, 1.5]
+    assert [t.pnl for t in trades] == [pytest.approx(5.0), pytest.approx(7.5)]
+    assert all(t.side == "short" and t.entry_price == pytest.approx(105.0) for t in trades)
+
+
+def test_stop_and_reverse_scores_each_side_separately():
+    trades = trades_from_orders([
+        _order(OrderSide.BUY, 1.0, 100.0),
+        _order(OrderSide.SELL, 1.0, 120.0),  # closes the long: +20
+        _order(OrderSide.SELL, 1.0, 120.0),  # opens a short
+        _order(OrderSide.BUY, 1.0, 130.0),   # covers it: -10
+    ])
+    assert [(t.side, t.pnl) for t in trades] == [("long", pytest.approx(20.0)),
+                                                  ("short", pytest.approx(-10.0))]
 
 
 def test_backtester_rejects_empty_candle_data():
@@ -373,3 +411,160 @@ def test_buy_and_hold_skips_a_symbol_with_a_non_positive_first_close():
 
     # Only ETH contributes: +100%. Averaging BTC in would have halved this.
     assert result.buy_hold_return_pct == pytest.approx(1.0)
+
+
+# ── sizing against available cash ────────────────────────────────────────────
+
+
+def test_a_second_position_is_scaled_to_the_cash_that_is_left():
+    # Two symbols at 60% of equity each, signalling on the same bar. Sized on equity
+    # alone the second entry cannot be paid for and used to be dropped entirely; now it
+    # takes the ~40% that is left, so both symbols trade.
+    closes = [100 + 15 * math.sin(i / 8) for i in range(200)]
+    config = _config(risk=RiskConfig(position_pct=0.6, max_open_positions=2, stop_loss_pct=0.0,
+                                     take_profit_pct=0.0, max_drawdown_pct=0.0))
+    config.symbols = ["BTC/USDT", "ETH/USDT"]
+    result = Backtester(config).run({"BTC/USDT": _candles(closes), "ETH/USDT": _candles(closes)})
+    assert {t.symbol for t in result.trades} == {"BTC/USDT", "ETH/USDT"}
+    first_btc = next(t for t in result.trades if t.symbol == "BTC/USDT")
+    first_eth = next(t for t in result.trades if t.symbol == "ETH/USDT")
+    assert first_eth.amount == pytest.approx(first_btc.amount * 0.4 / 0.6, rel=0.05)
+
+
+# ── intrabar protective exits ────────────────────────────────────────────────
+
+
+def _bars(rows, start: int = 1_700_000_000_000) -> list[Candle]:
+    """Candles from (open, high, low, close) rows."""
+    return [Candle(start + i * HOUR_MS, o, h, low, c, 1.0) for i, (o, h, low, c) in enumerate(rows)]
+
+
+def _buy_once_config(**risk) -> BotConfig:
+    base = dict(position_pct=0.5, max_open_positions=1, stop_loss_pct=0.0, take_profit_pct=0.0,
+                max_drawdown_pct=0.0, max_position_pct=0.5, allow_averaging_in=False)
+    config = _config(
+        strategy=StrategyConfig(name="dca", params={"every": 1}),
+        risk=RiskConfig(**{**base, **risk}),
+        paper=PaperConfig(starting_cash=10_000.0, fee_rate=0.0, slippage_pct=0.0),
+    )
+    return config
+
+
+FLAT = (100.0, 100.0, 100.0, 100.0)
+
+
+def test_a_stop_fills_at_its_level_when_the_bar_trades_through_it():
+    # Bought at 100 with a 5% stop. The next bar dips to 90 intrabar but closes at 99:
+    # a close-only check would never stop out; the live bot, polling every minute, would.
+    rows = [FLAT, FLAT, (100.0, 101.0, 90.0, 99.0), (99.0, 99.0, 99.0, 99.0)]
+    result = Backtester(_buy_once_config(stop_loss_pct=0.05)).run({"BTC/USDT": _bars(rows)})
+    assert result.trades[0].exit_price == pytest.approx(95.0)  # the stop level, not the low
+
+    held = Backtester(_buy_once_config(stop_loss_pct=0.05), intrabar_stops=False).run(
+        {"BTC/USDT": _bars(rows)}
+    )
+    assert held.num_trades == 0  # close-only: 99 is above the 95 stop
+
+
+def test_a_bar_that_gaps_through_the_stop_fills_at_its_open():
+    rows = [FLAT, FLAT, (88.0, 89.0, 85.0, 86.0), (86.0, 86.0, 86.0, 86.0)]
+    result = Backtester(_buy_once_config(stop_loss_pct=0.05)).run({"BTC/USDT": _bars(rows)})
+    assert result.trades[0].exit_price == pytest.approx(88.0)  # no fill at 95 was possible
+
+
+def test_take_profit_fills_at_its_level_intrabar():
+    rows = [FLAT, FLAT, (100.0, 130.0, 99.0, 101.0), (101.0, 101.0, 101.0, 101.0)]
+    result = Backtester(_buy_once_config(take_profit_pct=0.10)).run({"BTC/USDT": _bars(rows)})
+    assert result.trades[0].exit_price == pytest.approx(110.0)
+
+    gapped = [FLAT, FLAT, (120.0, 125.0, 119.0, 121.0), (121.0, 121.0, 121.0, 121.0)]
+    result = Backtester(_buy_once_config(take_profit_pct=0.10)).run({"BTC/USDT": _bars(gapped)})
+    assert result.trades[0].exit_price == pytest.approx(120.0)  # gapped above: fills at open
+
+
+def test_an_ambiguous_bar_is_read_pessimistically():
+    # The bar reaches both the stop (95) and the take-profit (110): assume the stop came first.
+    rows = [FLAT, FLAT, (100.0, 120.0, 90.0, 100.0), FLAT]
+    result = Backtester(_buy_once_config(stop_loss_pct=0.05, take_profit_pct=0.10)).run(
+        {"BTC/USDT": _bars(rows)}
+    )
+    assert result.trades[0].exit_price == pytest.approx(95.0)
+
+
+def test_trailing_stop_follows_an_intrabar_high():
+    # Runs to 150 inside a bar, then the next bar falls through the 10% trail (135).
+    rows = [FLAT, FLAT, (100.0, 150.0, 100.0, 148.0), (148.0, 149.0, 120.0, 125.0), FLAT]
+    result = Backtester(_buy_once_config(trailing_stop_pct=0.10)).run({"BTC/USDT": _bars(rows)})
+    assert result.trades[0].exit_price == pytest.approx(135.0)
+
+
+def test_intrabar_exits_mirror_for_shorts():
+    from crypto_bot.config import DerivativesConfig
+    from crypto_bot.core.models import HOLD, Signal, SignalType
+    from crypto_bot.strategies.base import Strategy
+    from crypto_bot.strategies.registry import _REGISTRY
+
+    class _ShortOnce(Strategy):
+        name = "short_once_probe"
+        warmup = 2
+
+        def generate(self, candles, symbol=None):
+            return Signal(SignalType.SELL, "short") if len(candles) == 2 else HOLD
+
+    _REGISTRY[_ShortOnce.name] = _ShortOnce
+    try:
+        def run(rows, **risk):
+            config = _buy_once_config(**risk)
+            config.strategy = StrategyConfig(name=_ShortOnce.name)
+            config.derivatives = DerivativesConfig(allow_shorts=True)
+            return Backtester(config).run({"BTC/USDT": _bars(rows)})
+
+        spike = [FLAT, FLAT, (100.0, 112.0, 99.0, 101.0), FLAT]
+        assert run(spike, stop_loss_pct=0.05).trades[0].exit_price == pytest.approx(105.0)
+        gap_up = [FLAT, FLAT, (108.0, 112.0, 107.0, 109.0), FLAT]
+        assert run(gap_up, stop_loss_pct=0.05).trades[0].exit_price == pytest.approx(108.0)
+        drop = [FLAT, FLAT, (100.0, 101.0, 80.0, 99.0), FLAT]
+        assert run(drop, take_profit_pct=0.10).trades[0].exit_price == pytest.approx(90.0)
+        gap_down = [FLAT, FLAT, (85.0, 86.0, 80.0, 84.0), FLAT]
+        assert run(gap_down, take_profit_pct=0.10).trades[0].exit_price == pytest.approx(85.0)
+        # Falls to 60 intrabar, then rallies through the 10% trail above that trough (66).
+        trail = [FLAT, FLAT, (100.0, 100.0, 60.0, 62.0), (62.0, 80.0, 61.0, 75.0), FLAT]
+        assert run(trail, trailing_stop_pct=0.10).trades[0].exit_price == pytest.approx(66.0)
+    finally:
+        del _REGISTRY[_ShortOnce.name]
+
+
+# ── start_ts ─────────────────────────────────────────────────────────────────
+
+
+def test_start_ts_begins_trading_at_that_bar_with_earlier_bars_as_warm_up():
+    closes = [100 + 15 * math.sin(i / 8) for i in range(200)]
+    candles = _candles(closes)
+    full = Backtester(_config()).run({"BTC/USDT": candles})
+    late = Backtester(_config()).run({"BTC/USDT": candles}, start_ts=candles[120].timestamp)
+    assert full.bars == 188 and late.bars == 80
+    assert late.start_ts == candles[120].timestamp
+    assert late.num_trades < full.num_trades
+
+    # Before the warm-up is satisfied the warm-up wins; past the end it clamps to the last bar.
+    early = Backtester(_config()).run({"BTC/USDT": candles}, start_ts=candles[3].timestamp)
+    assert early.bars == full.bars
+    end = Backtester(_config()).run({"BTC/USDT": candles}, start_ts=candles[-1].timestamp + 10**9)
+    assert end.bars == 1
+
+
+def test_timeframe_helper_is_shared_with_core():
+    from crypto_bot.core import timeframes
+
+    assert timeframe_to_ms is timeframes.timeframe_to_ms
+
+
+def test_signal_on_close_backtests_identically():
+    # History is all completed candles, replayed one per step, so deciding "on close"
+    # changes nothing in a backtest. That equivalence is the point of the setting.
+    closes = [100 + 15 * math.sin(i / 8) for i in range(200)]
+    plain = Backtester(_config()).run({"BTC/USDT": _candles(closes)})
+    on_close = Backtester(_config(signal_on_close=True)).run({"BTC/USDT": _candles(closes)})
+    assert on_close.num_trades == plain.num_trades > 0
+    assert on_close.ending_equity == pytest.approx(plain.ending_equity)
+    assert on_close.equity_curve == plain.equity_curve

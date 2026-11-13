@@ -174,6 +174,7 @@ class Position:
     peak_price: float = 0.0  # highest price seen while open (long trailing stop)
     side: PositionSide = PositionSide.LONG
     trough_price: float = 0.0  # lowest price seen while open (short trailing stop)
+    atr: float = 0.0  # Average True Range when (last) entered; 0 = unknown. Sets ATR stops.
 
     @property
     def is_short(self) -> bool:

@@ -28,8 +28,14 @@ class Breakout(Strategy):
     def __init__(self, params: dict | None = None) -> None:
         super().__init__(params)
         self.lookback = int(self.params.get("lookback", 20))
+        # The classic "turtle" refinement: enter on the `lookback`-bar breakout but exit on
+        # a shorter channel, so a failed move is abandoned sooner than a full reversal
+        # would take. Defaults to `lookback` (exit only on the opposite breakout).
+        self.exit_lookback = int(self.params.get("exit_lookback", self.lookback))
         if self.lookback <= 0:
             raise ValueError("lookback must be positive")
+        if not 0 < self.exit_lookback <= self.lookback:
+            raise ValueError("exit_lookback must be in 1..lookback")
 
     @property
     def warmup(self) -> int:
@@ -64,4 +70,23 @@ class Breakout(Strategy):
                 SignalType.SELL,
                 reason=f"close {close:.4f} broke {self.lookback}-bar low {channel_low:.4f}",
             )
+        if self.exit_lookback < self.lookback:
+            # Exit-only signals on the shorter channel: they close a position, never open one.
+            tail = self.exit_lookback + 1
+            exit_low = lowest(lows[-tail:], self.exit_lookback)[-2]
+            exit_high = highest(highs[-tail:], self.exit_lookback)[-2]
+            if close < exit_low:
+                return Signal(
+                    SignalType.SELL,
+                    reason=f"close {close:.4f} broke {self.exit_lookback}-bar exit low "
+                    f"{exit_low:.4f}",
+                    reduce_only=True,
+                )
+            if close > exit_high:
+                return Signal(
+                    SignalType.BUY,
+                    reason=f"close {close:.4f} broke {self.exit_lookback}-bar exit high "
+                    f"{exit_high:.4f}",
+                    reduce_only=True,
+                )
         return HOLD
