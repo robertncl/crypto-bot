@@ -14,6 +14,8 @@ or :class:`LiveBroker` and everything else is identical.
 from __future__ import annotations
 
 import logging
+import time
+from collections.abc import Callable
 
 from crypto_bot.config import BotConfig
 from crypto_bot.core.broker import Broker, LiveBroker, PaperBroker
@@ -26,12 +28,29 @@ from crypto_bot.core.models import (
     SignalType,
 )
 from crypto_bot.core.portfolio import Portfolio
+from crypto_bot.core.timeframes import timeframe_to_ms
 from crypto_bot.exchanges.base import ExchangeAdapter, ExchangeError
 from crypto_bot.exchanges.factory import build_exchange
+from crypto_bot.indicators.ta import atr
 from crypto_bot.logging_setup import LOGGER_NAME
 from crypto_bot.risk.manager import RiskManager
 from crypto_bot.strategies.base import Strategy
 from crypto_bot.strategies.registry import build_strategy
+
+#: With ``signal_on_close``, a completed candle may be acted on for this fraction of its
+#: own length after it closes (and never less than three polls).
+SIGNAL_FRESHNESS = 0.10
+
+
+def candle_windows(config: BotConfig, strategy: Strategy) -> tuple[int, int]:
+    """``(strategy_window, fetch_limit)``: candles the strategy is shown, and candles the
+    engine must fetch to also compute the trend filter and ATR (plus the forming candle
+    that ``signal_on_close`` sets aside)."""
+    strategy_window = max(strategy.warmup + 5, 200)
+    fetch_limit = max(
+        strategy_window, config.risk.trend_filter_period + 1, config.risk.atr_period + 2
+    )
+    return strategy_window, fetch_limit + (1 if config.signal_on_close else 0)
 
 
 class Engine:
@@ -53,12 +72,30 @@ class Engine:
         self.broker = broker
         self.log = logger or logging.getLogger(LOGGER_NAME)
         self._last_prices: dict[str, float] = {}
-        self._candle_limit = max(strategy.warmup + 5, 200)
+        # The strategy always sees the same window, whatever the risk settings; the
+        # engine may fetch more than that to compute a long trend filter or the ATR.
+        self._strategy_window, self._candle_limit = candle_windows(config, strategy)
+        # signal_on_close: decide once per completed candle. The forming candle is fetched
+        # (it carries the latest price for stops) but kept away from the strategy.
+        self._signal_on_close = config.signal_on_close
+        if self._signal_on_close:
+            self._tf_ms = timeframe_to_ms(config.timeframe)
+            # A completed candle is acted on only while it is fresh. A bot started (or
+            # recovering) mid-candle must not trade a decision that is hours old at a
+            # price the market has since left; it waits for the next candle to complete.
+            self._max_signal_age_ms = max(
+                self._tf_ms * SIGNAL_FRESHNESS, 3 * config.poll_seconds * 1000
+            )
+        self._signal_bar: dict[str, int] = {}  # last completed candle acted on, per symbol
+        self._clock: Callable[[], float] = time.time
         self._running = False
         self._allow_shorts = config.derivatives.allow_shorts
         # Timestamp (ms) of the last funding settlement, so accrual happens once per
         # interval rather than once per poll.
         self._last_funding_ts: int | None = None
+        # Called with each order once the portfolio has booked it (the backtester's
+        # trade record). Orders the portfolio refuses never reach it.
+        self.on_fill: Callable[[Order], None] | None = None
 
     # -- price access used by the paper broker ---------------------------------
     def last_price(self, symbol: str) -> float:
@@ -67,8 +104,6 @@ class Engine:
     # -- main loop -------------------------------------------------------------
     def run(self) -> None:
         """Poll forever until interrupted (Ctrl-C)."""
-        import time
-
         self._running = True
         mode = "LIVE" if self.config.is_live else "PAPER"
         self.log.info(
@@ -114,7 +149,8 @@ class Engine:
 
         # 2. Mark to market and update the kill-switch.
         equity = self.portfolio.equity(self._last_prices)
-        self.risk.update_equity(equity)
+        now = max((c[-1].timestamp for c in candles_by_symbol.values()), default=None)
+        self.risk.update_equity(equity, now)
         halted = self.risk.is_halted(equity)
         if halted:
             self.log.warning(
@@ -147,7 +183,16 @@ class Engine:
 
         # 4. Strategy-driven entries/exits.
         for symbol, candles in candles_by_symbol.items():
-            signal = self._ask_strategy(candles, symbol)
+            if self._signal_on_close:
+                candles = self._completed(candles)
+                if not candles or candles[-1].timestamp == self._signal_bar.get(symbol):
+                    continue  # no newly completed candle: nothing new to decide
+                self._signal_bar[symbol] = candles[-1].timestamp
+                age_ms = self._clock() * 1000 - (candles[-1].timestamp + self._tf_ms)
+                if age_ms > self._max_signal_age_ms:
+                    self.log.debug("%s: newest completed candle is stale; waiting", symbol)
+                    continue
+            signal = self._ask_strategy(candles[-self._strategy_window :], symbol)
             if signal.type == SignalType.HOLD:
                 continue
             price = self._last_prices[symbol]
@@ -182,6 +227,10 @@ class Engine:
                 continue
 
             side = PositionSide.SHORT if wants_short else PositionSide.LONG
+            if not self.risk.trend_allows(side, price, self._trend_average(candles)):
+                self.log.debug("%s %s skipped: against the trend filter", side.value, symbol)
+                continue
+            entry_atr = self._entry_atr(candles)
             has_position = self.portfolio.has_position(symbol)
             position_notional = (
                 self.portfolio.positions[symbol].notional(price) if has_position else 0.0
@@ -193,6 +242,8 @@ class Engine:
                 has_position=has_position,
                 position_notional=position_notional,
                 side=side,
+                atr=entry_atr,
+                cash=self.portfolio.cash,
             )
             if not decision.approved:
                 self.log.debug("%s %s skipped: %s", side.value, symbol, decision.reason)
@@ -203,7 +254,10 @@ class Engine:
                 amount=decision.amount,
                 reason=f"{signal.reason} | {decision.reason}",
             )
-            self._submit(request)
+            order = self._submit(request)
+            opened = self.portfolio.positions.get(symbol)
+            if entry_atr and order is not None and order.is_filled and opened is not None:
+                opened.atr = entry_atr  # anchors this position's volatility-scaled stops
 
         # snapshot() walks every position and rounds a dict of dicts; logging would
         # discard that work whenever INFO is off (backtests silence the engine), so
@@ -212,6 +266,31 @@ class Engine:
             self.log.info("cycle complete | %s", self.portfolio.snapshot(self._last_prices))
 
     # -- helpers ---------------------------------------------------------------
+    def _completed(self, candles: list) -> list:
+        """``candles`` without a still-forming last candle (its period has not ended)."""
+        if candles and candles[-1].timestamp + self._tf_ms > self._clock() * 1000:
+            return candles[:-1]
+        return candles
+
+    def _trend_average(self, candles: list) -> float | None:
+        """Simple moving average for the trend filter; None if off or history is short."""
+        period = self.config.risk.trend_filter_period
+        if period <= 0 or len(candles) < period:
+            return None
+        return sum(c.close for c in candles[-period:]) / period
+
+    def _entry_atr(self, candles: list) -> float | None:
+        """Current ATR, computed only when a volatility-scaled risk setting needs it."""
+        cfg = self.config.risk
+        if cfg.atr_stop_mult <= 0 and cfg.atr_trailing_mult <= 0:
+            return None
+        window = candles[-(cfg.atr_period * 5) :]  # Wilder smoothing has converged by then
+        value = atr(
+            [c.high for c in window], [c.low for c in window], [c.close for c in window],
+            cfg.atr_period,
+        )[-1]
+        return value if value and value > 0 else None
+
     def _ask_strategy(self, candles: list, symbol: str):
         """Get a signal, supplying market context only to strategies that asked for it."""
         if not getattr(self.strategy, "wants_context", False):
@@ -304,6 +383,8 @@ class Engine:
         except ValueError as exc:
             self.log.warning("fill rejected by portfolio: %s", exc)
             return order
+        if self.on_fill is not None:
+            self.on_fill(order)
 
         self.log.info(
             "%s %s %.8f @ %.4f (fee %.4f) — %s",

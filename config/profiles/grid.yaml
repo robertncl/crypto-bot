@@ -1,14 +1,15 @@
 # ── GRID profile (range harvester) ─────────────────────────────────────────
-# The classic exchange grid bot. A ladder of price lines 2% apart: every fall
+# The classic exchange grid bot. A ladder of price lines 3% apart: every fall
 # through a line buys one small tranche, every rise through a line sells it again,
 # so each round trip earns roughly one grid step minus fees. No direction call at
 # all - it profits from oscillation. While flat, the grid trails price upward.
 #
-# The grid takes its own profits line by line, so take-profit is off. The stack is
-# capped per symbol, and a wide stop plus the kill-switch bound a downtrend.
+# New tranches are only bought while price is above its ~33-day average, so the
+# ladder stops catching a falling market. The grid takes its own profits line by
+# line, so take-profit is off; the stack is capped per symbol, with a wide disaster
+# stop and the kill-switch behind it.
 #
-# Backtest it first, then paper-trade it:
-#   crypto-bot backtest --bot grid --days 180
+#   crypto-bot backtest --bot grid --days 365
 #   crypto-bot run --bot grid
 
 # Catalog metadata (descriptive only): `crypto-bot bots` lists it, `compare` measures it.
@@ -17,9 +18,9 @@ bot:
   category: grid
   risk_level: 3            # up to ~60% deployed (2 symbols x 30% cap), wide stop
   return_potential: moderate
-  summary: Buys each 2% step down and sells each 2% step up, harvesting oscillation.
-  best_for: Sideways, oscillating markets with no strong trend.
-  main_risk: A sustained downtrend - it buys all the way down to its cap, then holds.
+  summary: Buys each 3% step down and sells each 3% step up, harvesting oscillation.
+  best_for: Sideways-to-rising, oscillating markets.
+  main_risk: A sharp drop after the stack is built - it holds until the wide stop.
 
 mode: paper
 
@@ -33,23 +34,25 @@ symbols:
   - ETH/USDT
 
 # Live, the grid reacts to the latest price on every poll; the timeframe sets how
-# finely a backtest replays history.
-timeframe: 1h
+# finely a backtest replays history and the unit of the trend filter below.
+timeframe: 4h
 poll_seconds: 60
 
 strategy:
   name: grid
   params:
-    spacing_pct: 0.02        # 2% between lines; must clear ~0.3% round-trip costs
+    spacing_pct: 0.03        # 3% between lines: ~10x the ~0.3% round-trip cost
 
 risk:
   position_pct: 0.06         # each grid tranche is 6% of equity
   max_open_positions: 2      # = number of symbols
   allow_averaging_in: true   # REQUIRED: each line down adds a tranche to the stack
   max_position_pct: 0.30     # stack cap: at most 5 tranches (30% of equity) per symbol
-  stop_loss_pct: 0.15        # wide disaster stop on the stack's average entry
+  stop_loss_pct: 0.25        # wide disaster stop: a grid is meant to hold through dips
   take_profit_pct: 0.0       # off: the grid sells line by line itself
+  trend_filter_period: 200   # only add tranches above the 200-bar (~33-day) average
   max_drawdown_pct: 0.25
+  drawdown_cooldown_days: 30 # re-arm the kill-switch after a 30-day pause
 
 paper:
   starting_cash: 10000.0

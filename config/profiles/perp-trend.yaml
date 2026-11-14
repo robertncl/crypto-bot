@@ -2,25 +2,29 @@
 # The highest-risk recipe in the box. A filtered Donchian breakout (ADX strength
 # + EMA-100 regime) traded BOTH ways on perpetual swaps: long breakouts in uptrends,
 # short breakdowns in downtrends, stop-and-reverse between them. Nearly all equity
-# can be deployed, positions pay or earn funding every 8h, and a downtrend is as
-# tradable as an uptrend - which also means it can lose in both directions.
+# can be deployed and positions pay or earn funding every 8h.
+#
+# On 4h bars with no trailing stop: the old 1h version with an 8% trail was stopped
+# out of every trend it caught. The long side carries the returns; the short side
+# has roughly broken even over a full cycle and is there to make bear markets
+# tradable rather than to add profit.
 #
 # Requires perp symbols (BASE/QUOTE:SETTLE). See docs/DERIVATIVES.md. Before going
 # live, set leverage to 1x for these symbols ON THE EXCHANGE: the bot refuses to start
 # live if it is higher, since a levered isolated position can be liquidated before the
 # stop-loss fires.
-#   crypto-bot backtest --bot perp-trend --days 180
+#   crypto-bot backtest --bot perp-trend --days 365
 #   crypto-bot run --bot perp-trend
 
 # Catalog metadata (descriptive only): `crypto-bot bots` lists it, `compare` measures it.
 bot:
   name: Perp Long/Short Trend
   category: long-short
-  risk_level: 5            # up to ~90% deployed, two-sided on perps, fast 1h bars
+  risk_level: 5            # up to ~90% deployed, two-sided on perps
   return_potential: very high
-  summary: Trades filtered breakouts long AND short on BTC/ETH/SOL perpetuals.
+  summary: Trades filtered 4h breakouts long AND short on BTC/ETH/SOL perpetuals.
   best_for: Strong trends in either direction, including bear markets.
-  main_risk: Losing on both sides in chop, plus funding costs on every open position.
+  main_risk: Losing on both sides in chop, deep drawdowns, and funding costs.
 
 mode: paper
 
@@ -35,8 +39,9 @@ symbols:
   - ETH/USDT:USDT
   - SOL/USDT:USDT
 
-timeframe: 1h
+timeframe: 4h
 poll_seconds: 60
+signal_on_close: true     # decide once per completed candle, exactly as a backtest does
 
 strategy:
   name: trend_ls
@@ -54,10 +59,12 @@ derivatives:
 risk:
   position_pct: 0.30         # 30% of equity per position
   max_open_positions: 3
-  stop_loss_pct: 0.06        # mirrors for shorts: triggers when price RISES 6%
-  trailing_stop_pct: 0.08
-  take_profit_pct: 0.0       # off: let the trailing stop end the run
+  stop_loss_pct: 0.0         # off: replaced by the volatility-scaled stop below
+  atr_stop_mult: 3.0         # 3 ATRs against the position (above entry for a short)
+  trailing_stop_pct: 0.0     # off: an 8% trail was the single most damaging setting
+  take_profit_pct: 0.0       # off: the opposite breakout ends (and reverses) the trade
   max_drawdown_pct: 0.40
+  drawdown_cooldown_days: 30 # re-arm the kill-switch after a 30-day pause
 
 paper:
   starting_cash: 10000.0

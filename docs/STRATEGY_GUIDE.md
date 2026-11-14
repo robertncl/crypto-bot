@@ -161,11 +161,39 @@ Notice `take_profit (15%)` is larger than `stop_loss (5%)` here — a 3:1 *rewar
 That means you can be wrong twice for every time you're right and still come out ahead. Aiming
 for reward ≥ risk is a core discipline.
 
+**The catch: a stop has to sit outside the market's normal wobble.** Crypto majors routinely
+move 4–8% in a single day. A 5% stop on a daily chart isn't protecting you from a bad trade;
+it's being hit by ordinary noise, over and over, and each hit costs a loss plus fees. When this
+bot's own recipes were tested on five years of history, tight fixed stops were the single
+biggest reason they lost money. A 5–8% *trailing* stop was the worst: it sold out of nearly
+every big trend early. A fixed take-profit hurt trend-following too, because a trend follower
+makes its money on a few huge winners and the take-profit cut them all off.
+
+The fix is to measure the wobble and place the stop beyond it. **ATR** (Average True Range)
+is the average size of a candle's move lately. A stop "3 ATRs away" is far on a wild market
+and close on a calm one, automatically:
+```yaml
+  stop_loss_pct: 0.0        # off
+  atr_stop_mult: 3.0        # stop-loss 3 ATRs below entry
+  take_profit_pct: 0.0      # off: let the strategy's own sell signal end the trade
+```
+You can go a step further and size the trade from the stop: `risk_per_trade_pct: 0.01` makes
+every stop-out cost about 1% of your account, so volatile coins get smaller positions.
+
+**Trend filter — don't buy a falling market.** A strategy that only buys will keep buying all
+the way down a bear market. A simple, old rule fixes most of that: only buy while price is
+above its long-run average.
+```yaml
+  trend_filter_period: 200  # only buy above the 200-candle moving average
+```
+
 **Drawdown kill-switch — live to trade another day.** *Drawdown* is how far your account has
 fallen from its peak. If a strategy is clearly failing, you want it to *stop*, not keep digging.
 ```yaml
   max_drawdown_pct: 0.25    # if equity falls 25% below its high-water mark, stop opening trades
+  drawdown_cooldown_days: 30  # ...then allow trading again after a 30-day pause
 ```
+Without the cooldown the bot stays halted until you restart it.
 
 **Diversification.** Trading several uncorrelated pairs spreads risk — but in crypto, most coins
 move together, so don't assume 5 coins = 5x safer.
@@ -257,13 +285,13 @@ work at once, whether it uses stop-losses, and whether it can bet *against* the 
 
 | Risk | Bot | What it does | Return potential |
 | --- | --- | --- | --- |
-| 1 very low | `conservative` | Buys rare, stretched dips with tiny positions (daily chart) | low |
-| 2 low | `balanced` | Buys the bounce out of oversold RSI | moderate |
+| 1 very low | `conservative` | Buys rare, stretched dips in an uptrend with tiny positions; sells at the average | low |
+| 2 low | `balanced` | Follows a daily moving-average crossover, in uptrends only | moderate |
 | 2 low | `adaptive` | Switches between trend-following and dip-buying by market mood | moderate |
-| 3 moderate | `grid` | Buys every 2% step down, sells every 2% step up | moderate |
-| 3 moderate | `momentum` | Trades MACD momentum turns | high |
-| 3 moderate | `trend` | Rides Supertrend trends | high |
-| 4 high | `aggressive` | Chases breakouts with big positions on a fast chart | high |
+| 3 moderate | `grid` | Buys every 3% step down, sells every 3% step up | moderate |
+| 3 moderate | `momentum` | Trades daily MACD momentum turns | high |
+| 3 moderate | `trend` | Rides daily Supertrend trends until they break | high |
+| 4 high | `aggressive` | Chases 4-hour breakouts with big positions | very high |
 | 4 high | `dca` | Buys a slice every day and never sells | tracks the market |
 | 5 very high | `perp-trend` | Trades breakouts long *and* short on perpetual futures | very high |
 
@@ -283,10 +311,13 @@ crypto-bot run --once --bot conservative
 ```
 
 Then read the logs, change **one** thing, and run it again. These are training wheels to learn
-from — *not* advice about what will make money. There is no "best" bot: in a bear market even
-the "very high return potential" bot loses money, just more of it. Notice `dca` sits at 4: it
-feels safe because it never panics, but it also never sells, so it falls as far as the market
-does.
+from — *not* advice about what will make money. There is no "best" bot, and every one of them
+has losing stretches. Notice `dca` sits at 4: it feels safe because it never panics, but it
+also never sells, so it falls as far as the market does.
+
+These recipes were built from a study of five years of history and then checked on 16 further
+months the study never looked at. The README's "How the bots were built" section has the
+numbers, including the bots that still lost money in that check.
 
 ### Still just ideas (good next exercises)
 

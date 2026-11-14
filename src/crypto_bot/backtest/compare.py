@@ -2,8 +2,10 @@
 
 Each bot keeps its own symbols and timeframe; history is downloaded once per distinct
 ``(exchange, symbol, timeframe)`` and shared by every bot that trades it, so the bots
-are scored on identical data. A bot that cannot be scored (data unavailable, too little
-history for its warm-up) gets an error row instead of aborting the comparison.
+are scored on identical data. Extra history is fetched before the window so every bot's
+indicators and trend filter are warm on its first day. A bot that cannot be scored (data
+unavailable, too little history for its warm-up) gets an error row instead of aborting
+the comparison.
 """
 
 from __future__ import annotations
@@ -12,7 +14,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from crypto_bot.backtest.engine import Backtester, BacktestResult, fetch_history
+from crypto_bot.backtest.engine import Backtester, BacktestResult, fetch_history, warmup_ms
 from crypto_bot.catalog import CatalogEntry
 from crypto_bot.config import ExchangeConfig
 from crypto_bot.core.models import Candle
@@ -44,6 +46,17 @@ def compare_bots(
     ``build_exchange`` makes a public-data adapter for an exchange config (one per
     distinct exchange). ``on_fetch(symbol, timeframe, n_candles)`` reports progress.
     """
+    # Each bot needs some history before the window to warm up its indicators and trend
+    # filter. A series shared by several bots is fetched once, from the earliest start
+    # any of them needs.
+    fetch_from: dict[tuple, int] = {}
+    for entry in entries:
+        cfg = entry.config
+        start = since_ms - warmup_ms(cfg)
+        for symbol in cfg.symbols:
+            key = (_exchange_key(cfg.exchange), symbol, cfg.timeframe)
+            fetch_from[key] = min(fetch_from.get(key, start), start)
+
     series: dict[tuple, list[Candle] | str] = {}  # key -> candles, or an error message
     adapters: dict[tuple, ExchangeAdapter] = {}
     try:
@@ -57,7 +70,9 @@ def compare_bots(
                 try:
                     if ex_key not in adapters:
                         adapters[ex_key] = build_exchange(cfg.exchange)
-                    candles = fetch_history(adapters[ex_key], symbol, cfg.timeframe, since_ms)
+                    candles = fetch_history(
+                        adapters[ex_key], symbol, cfg.timeframe, fetch_from[key]
+                    )
                 except ExchangeError as exc:
                     series[key] = f"could not fetch {symbol} {cfg.timeframe}: {exc}"
                     continue
@@ -88,7 +103,8 @@ def compare_bots(
             results.append(Comparison(entry, error=error))
             continue
         try:
-            results.append(Comparison(entry, result=Backtester(cfg).run(candles_by_symbol)))
+            result = Backtester(cfg).run(candles_by_symbol, start_ts=since_ms)
+            results.append(Comparison(entry, result=result))
         except ValueError as exc:  # e.g. not enough history for the strategy's warm-up
             results.append(Comparison(entry, error=str(exc)))
     return results

@@ -22,6 +22,10 @@ symbols:
 # Candle timeframe and how often to poll for new data.
 timeframe: 1h
 poll_seconds: 60
+# true = evaluate the strategy once per *completed* candle instead of on every poll of the
+# still-forming one. That is what a backtest does, so live results track backtested ones.
+# Protective stops still check the latest price on every poll.
+signal_on_close: false
 
 strategy:
   name: ma_crossover
@@ -44,6 +48,18 @@ risk:
   trailing_stop_pct: 0.0
   # Kill-switch: halt all trading if equity drops this far below its peak.
   max_drawdown_pct: 0.25
+  # Re-arm the kill-switch after this many days halted (0 = stay halted until restart).
+  # drawdown_cooldown_days: 30
+
+  # -- Volatility-aware risk (optional; all off by default) --------------------------
+  # A fixed-% stop ignores how much the market normally moves. These scale stops and
+  # size by ATR (the average candle range) measured when the position is opened.
+  # atr_stop_mult: 3.0          # stop-loss 3 ATRs from entry (set stop_loss_pct: 0 to use alone)
+  # atr_trailing_mult: 4.0      # trailing stop 4 ATRs behind the best price
+  # risk_per_trade_pct: 0.01    # size so a stop-out costs 1% of equity; position_pct is the cap
+  # atr_period: 14
+  # Only buy above (short below) the N-candle moving average. Exits are never blocked.
+  # trend_filter_period: 200
   # Averaging in: allow topping up a symbol already held. Leave false for signal
   # strategies (it stops them re-buying every poll); set true only for accumulate/DCA.
   allow_averaging_in: false

@@ -32,10 +32,16 @@ class RSIReversion(Strategy):
         self.period = int(self.params.get("period", 14))
         self.oversold = float(self.params.get("oversold", 30.0))
         self.overbought = float(self.params.get("overbought", 70.0))
+        # Optional early exit: close a long (reduce-only) once RSI recovers up through
+        # this level, and a short once it falls through the mirror level (100 - exit_rsi).
+        # 0 = off, i.e. hold until the opposite extreme or a protective stop.
+        self.exit_rsi = float(self.params.get("exit_rsi", 0.0))
         if self.period <= 0:
             raise ValueError("period must be positive")
         if not 0 < self.oversold < self.overbought < 100:
             raise ValueError("require 0 < oversold < overbought < 100")
+        if self.exit_rsi and not self.oversold < self.exit_rsi < self.overbought:
+            raise ValueError("exit_rsi must lie between oversold and overbought")
 
     @property
     def warmup(self) -> int:
@@ -67,4 +73,20 @@ class RSIReversion(Strategy):
                 reason=f"RSI({self.period}) fell below overbought "
                 f"{self.overbought:.0f} ({prev:.1f}->{now:.1f})",
             )
+        if self.exit_rsi:
+            if prev < self.exit_rsi <= now:
+                return Signal(
+                    SignalType.SELL,
+                    reason=f"RSI({self.period}) recovered to {self.exit_rsi:.0f} "
+                    f"({prev:.1f}->{now:.1f})",
+                    reduce_only=True,
+                )
+            mirror = 100.0 - self.exit_rsi
+            if prev > mirror >= now:
+                return Signal(
+                    SignalType.BUY,
+                    reason=f"RSI({self.period}) fell back to {mirror:.0f} "
+                    f"({prev:.1f}->{now:.1f})",
+                    reduce_only=True,
+                )
         return HOLD

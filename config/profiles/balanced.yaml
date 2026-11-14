@@ -1,19 +1,23 @@
 # ── BALANCED risk profile ──────────────────────────────────────────────────
-# A middle-of-the-road setup: contrarian RSI mean-reversion on majors at a medium
-# timeframe, with moderate sizing and a classic 1:2.5 risk:reward. A sensible
-# default once you've understood paper trading.
+# A middle-of-the-road trend follower: the textbook moving-average crossover on
+# daily bars, only taken while the long-run trend is up, with moderate sizing. Daily
+# bars keep trading costs low and let a trend run; the crossover itself is the exit.
 #
-# Run: crypto-bot run --config config/profiles/balanced.yaml
+# (Rebuilt: this bot used to trade RSI mean-reversion on 4h bars, which showed no
+# edge after costs across 2021-2025. The rsi_reversion strategy is still available.)
+#
+#   crypto-bot backtest --bot balanced --days 365
+#   crypto-bot run --bot balanced
 
 # Catalog metadata (descriptive only): `crypto-bot bots` lists it, `compare` measures it.
 bot:
-  name: Swing Reverter
-  category: mean-reversion
-  risk_level: 2            # up to ~30% deployed, stops on
+  name: Balanced Trend
+  category: trend
+  risk_level: 2            # up to ~30% deployed, long-only, trend-filtered
   return_potential: moderate
-  summary: Buys the bounce out of oversold RSI on majors, sells the roll-over from overbought.
-  best_for: Choppy, sideways markets with regular swings.
-  main_risk: Strong trends, where "oversold" keeps getting more oversold.
+  summary: Daily EMA 12/26 crossover on three majors, taken only in a long-run uptrend.
+  best_for: Sustained up-moves lasting weeks; stands aside in bear markets.
+  main_risk: Sideways markets, where crossovers flip back and forth.
 
 mode: paper
 
@@ -27,23 +31,27 @@ symbols:
   - ETH/USDT
   - SOL/USDT
 
-# Medium timeframe — a balance between responsiveness and noise.
-timeframe: 4h
+# Daily bars: few trades, low fee drag, room for a trend to develop.
+timeframe: 1d
 poll_seconds: 60
+signal_on_close: true     # decide once per completed candle, exactly as a backtest does
 
 strategy:
-  name: rsi_reversion      # buy the recovery out of oversold, sell the roll-over from overbought
+  name: ma_crossover       # buy when the fast average crosses above the slow one
   params:
-    period: 14
-    oversold: 30
-    overbought: 70
+    fast_period: 12
+    slow_period: 26
+    ma_type: ema
 
 risk:
   position_pct: 0.10       # 10% of equity per position
   max_open_positions: 3
-  stop_loss_pct: 0.06
-  take_profit_pct: 0.15    # 2.5:1 reward:risk
+  stop_loss_pct: 0.0       # off: replaced by the volatility-scaled stop below
+  atr_stop_mult: 3.0       # disaster stop 3 ATRs below entry
+  take_profit_pct: 0.0     # off: let a trend run until the averages cross back
+  trend_filter_period: 200 # only buy while price is above its 200-day average
   max_drawdown_pct: 0.25
+  drawdown_cooldown_days: 30 # re-arm the kill-switch after a 30-day pause
 
 paper:
   starting_cash: 10000.0

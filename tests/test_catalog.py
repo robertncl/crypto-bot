@@ -193,3 +193,54 @@ def test_compare_reports_per_bot_errors_without_aborting(tmp_path):
     assert results["empty"].error == "no history returned for XRP/USDT 1h"
     assert "not enough history" in results["short"].error
     assert results["ok"].result is not None
+
+
+def test_rebuilt_signal_bots_follow_the_rebuild_principles():
+    """What the 2021-2025 research showed, pinned so it cannot be quietly undone.
+
+    Fixed-percent trailing stops and take-profits sat inside normal crypto swings and
+    cut winners short; fast timeframes paid the edge away in fees; and deciding on a
+    still-forming candle diverges from what a backtest measures.
+    """
+    entries = {e.bot_id: e.config for e in load_catalog(SHIPPED)[0]}
+    signal_bots = ["conservative", "balanced", "adaptive", "trend", "momentum", "aggressive",
+                   "perp-trend"]
+    for name in signal_bots:
+        cfg = entries[name]
+        risk = cfg.risk
+        assert cfg.signal_on_close, name  # decide on completed candles, as backtested
+        assert cfg.timeframe in ("4h", "1d"), name  # slow enough for fees not to dominate
+        assert risk.atr_stop_mult > 0 and risk.stop_loss_pct == 0, name  # volatility-scaled stop
+        assert risk.trailing_stop_pct == 0 and risk.take_profit_pct == 0, name  # winners run
+        assert risk.drawdown_cooldown_days > 0, name  # the kill-switch re-arms
+    for name in signal_bots[:-1] + ["grid"]:  # every long-only bot avoids downtrends
+        assert entries[name].risk.trend_filter_period > 0, name
+    assert not entries["grid"].signal_on_close  # a grid reacts to live prices by design
+    # DCA is deliberately untouched: it is the buy-and-hold yardstick.
+    dca = entries["dca"].risk
+    assert (dca.atr_stop_mult, dca.trend_filter_period, dca.stop_loss_pct) == (0, 0, 0)
+
+
+def test_compare_fetches_warm_up_history_before_the_window(tmp_path):
+    from crypto_bot.backtest import warmup_ms
+
+    # One bot with a long trend filter, one without, sharing a series: it is fetched once,
+    # from far enough back for the bot that needs the most warm-up.
+    _write(tmp_path, "filtered", risk=1, extra="\nrisk: {trend_filter_period: 500}\n")
+    _write(tmp_path, "plain", risk=2, strategy="breakout")
+    entries, _ = load_catalog(tmp_path)
+    since = 1_700_000_000_000 + 250 * 3_600_000
+    seen = []
+
+    class _Venue(_History):
+        def fetch_candles(self, symbol, timeframe, limit=200, since=None):
+            seen.append(since)
+            return super().fetch_candles(symbol, timeframe, limit, 1_700_000_000_000)
+
+    results = compare_bots(entries, since, _Venue())
+    by_id = {r.entry.bot_id: r for r in results}
+    lead = warmup_ms(by_id["filtered"].entry.config)
+    assert lead == 501 * 3_600_000 > warmup_ms(by_id["plain"].entry.config) == 200 * 3_600_000
+    assert seen[0] == since - lead and len(seen) == 1
+    # Both bots trade only the requested window (50 of the 300 candles), warm from bar one.
+    assert all(r.result.bars == 50 and r.result.start_ts == since for r in results)

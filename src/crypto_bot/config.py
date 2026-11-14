@@ -12,6 +12,8 @@ from pathlib import Path
 
 import yaml
 
+from crypto_bot.core.timeframes import timeframe_to_ms
+
 
 class ConfigError(Exception):
     """Raised when configuration is missing or invalid."""
@@ -48,6 +50,31 @@ class RiskConfig:
     # (0 disables the cap). Stops a scheduled strategy piling unbounded into one symbol.
     max_position_pct: float = 0.0
 
+    # -- volatility-aware risk (all off by default) -------------------------------
+    # A fixed-percent stop ignores how much the market normally moves: 5% is far away on
+    # a quiet day and inside the noise on a wild one. These scale stops and position
+    # size by the Average True Range (ATR) measured when the position is opened.
+    atr_period: int = 14
+    # Stop-loss this many ATRs from the entry price (0 = off). Works alongside
+    # stop_loss_pct; whichever level is hit first exits.
+    atr_stop_mult: float = 0.0
+    # Trailing stop this many ATRs behind the best price seen since entry (0 = off).
+    atr_trailing_mult: float = 0.0
+    # Risk-based sizing: size each new position so that being stopped out at the ATR
+    # stop loses this fraction of equity (0 = off; needs atr_stop_mult). position_pct
+    # becomes the cap on the resulting notional, so quiet markets cannot over-size.
+    risk_per_trade_pct: float = 0.0
+
+    # Trend filter: only open (or add to) longs while price is above its simple moving
+    # average over this many candles, and shorts only while below it (0 = off). Keeps
+    # long-only strategies out of sustained downtrends. Exits are never blocked.
+    trend_filter_period: int = 0
+
+    # Kill-switch re-arm: once max_drawdown_pct has halted new entries for this many
+    # days, measure drawdown from the current equity again (0 = stay halted until the
+    # bot is restarted, the original behaviour).
+    drawdown_cooldown_days: float = 0.0
+
 
 @dataclass
 class DerivativesConfig:
@@ -82,6 +109,9 @@ class LoggingConfig:
     level: str = "INFO"
     file: str | None = None
 
+
+#: Longest trend filter the engine can compute from a single candle request.
+MAX_TREND_FILTER_PERIOD = 900
 
 #: Risk levels used by the bot catalog, lowest to highest.
 RISK_LEVELS = {1: "very low", 2: "low", 3: "moderate", 4: "high", 5: "very high"}
@@ -124,6 +154,12 @@ class BotConfig:
     logging: LoggingConfig
     derivatives: DerivativesConfig = field(default_factory=DerivativesConfig)
     bot: BotProfile | None = None  # catalog metadata, for ready-made bot profiles
+    # Evaluate the strategy once per *completed* candle instead of on every poll of the
+    # still-forming one. This is what a backtest does, so it keeps live behaviour in line
+    # with backtested results (a forming daily candle can cross a level at noon and
+    # un-cross it by the close). Protective stops still check the latest price every poll.
+    # A bot started mid-candle waits for the next candle to complete before deciding.
+    signal_on_close: bool = False
 
     @property
     def is_live(self) -> bool:
@@ -182,6 +218,12 @@ def _build_config(raw: dict) -> BotConfig:
     derivatives = _build_derivatives(raw.get("derivatives") or {})
 
     timeframe = str(raw.get("timeframe", "1h"))
+    signal_on_close = bool(raw.get("signal_on_close", False))
+    if signal_on_close:
+        try:  # the engine needs the candle length to tell a forming candle from a closed one
+            timeframe_to_ms(timeframe)
+        except ValueError as exc:
+            raise ConfigError(f"signal_on_close: {exc}") from exc
     poll_seconds = int(raw.get("poll_seconds", 60))
     if poll_seconds <= 0:
         raise ConfigError("poll_seconds must be a positive integer")
@@ -208,6 +250,7 @@ def _build_config(raw: dict) -> BotConfig:
         logging=logging_cfg,
         derivatives=derivatives,
         bot=_build_bot(raw["bot"]) if raw.get("bot") is not None else None,
+        signal_on_close=signal_on_close,
     )
 
 
@@ -269,6 +312,12 @@ def _build_risk(raw: dict) -> RiskConfig:
         max_drawdown_pct=float(raw.get("max_drawdown_pct", 0.25)),
         allow_averaging_in=bool(raw.get("allow_averaging_in", False)),
         max_position_pct=float(raw.get("max_position_pct", 0.0)),
+        atr_period=int(raw.get("atr_period", 14)),
+        atr_stop_mult=float(raw.get("atr_stop_mult", 0.0)),
+        atr_trailing_mult=float(raw.get("atr_trailing_mult", 0.0)),
+        risk_per_trade_pct=float(raw.get("risk_per_trade_pct", 0.0)),
+        trend_filter_period=int(raw.get("trend_filter_period", 0)),
+        drawdown_cooldown_days=float(raw.get("drawdown_cooldown_days", 0.0)),
     )
     if not 0 < risk.position_pct <= 1:
         raise ConfigError("risk.position_pct must be in (0, 1]")
@@ -280,11 +329,31 @@ def _build_risk(raw: dict) -> RiskConfig:
         "trailing_stop_pct",
         "max_drawdown_pct",
         "max_position_pct",
+        "atr_stop_mult",
+        "atr_trailing_mult",
+        "risk_per_trade_pct",
+        "trend_filter_period",
+        "drawdown_cooldown_days",
     ):
         if getattr(risk, name) < 0:
             raise ConfigError(f"risk.{name} must be >= 0")
     if risk.max_position_pct > 1:
         raise ConfigError("risk.max_position_pct must be in [0, 1] (0 disables the cap)")
+    if risk.atr_period < 1:
+        raise ConfigError("risk.atr_period must be >= 1")
+    if risk.risk_per_trade_pct > 0 and risk.atr_stop_mult <= 0:
+        raise ConfigError(
+            "risk.risk_per_trade_pct sizes positions from the ATR stop distance, so it "
+            "needs risk.atr_stop_mult > 0"
+        )
+    if risk.risk_per_trade_pct > 0.1:
+        raise ConfigError("risk.risk_per_trade_pct above 0.1 (10% of equity per trade) is unsafe")
+    # The engine reads the filter from one candle request; venues cap those near 1000.
+    if risk.trend_filter_period > MAX_TREND_FILTER_PERIOD:
+        raise ConfigError(
+            f"risk.trend_filter_period must be <= {MAX_TREND_FILTER_PERIOD} candles "
+            "(use a longer timeframe for a slower filter)"
+        )
     return risk
 
 

@@ -16,25 +16,9 @@ import math
 from dataclasses import dataclass
 
 from crypto_bot.core.models import Order, OrderSide
+from crypto_bot.core.timeframes import timeframe_to_ms  # moved to core; re-exported here
 
 _MS_PER_YEAR = 365 * 24 * 3600 * 1000
-
-_TIMEFRAME_UNITS_MS = {
-    "m": 60_000,
-    "h": 3_600_000,
-    "d": 86_400_000,
-    "w": 7 * 86_400_000,
-}
-
-
-def timeframe_to_ms(timeframe: str) -> int:
-    """Convert a ccxt-style timeframe ('1m', '4h', '1d', '1w') to milliseconds."""
-    tf = timeframe.strip()
-    if len(tf) < 2 or tf[-1] not in _TIMEFRAME_UNITS_MS or not tf[:-1].isdigit():
-        raise ValueError(
-            f"unsupported timeframe {timeframe!r} (expected e.g. 1m, 15m, 1h, 4h, 1d, 1w)"
-        )
-    return int(tf[:-1]) * _TIMEFRAME_UNITS_MS[tf[-1]]
 
 
 def bars_per_year(timeframe: str) -> float:
@@ -95,7 +79,7 @@ def cagr(start_equity: float, end_equity: float, elapsed_ms: int) -> float:
 
 @dataclass(frozen=True)
 class TradeRecord:
-    """One completed round trip (a sell closing some or all of a position)."""
+    """One completed round trip: a fill that closed some or all of a position."""
 
     symbol: str
     amount: float
@@ -103,47 +87,59 @@ class TradeRecord:
     exit_price: float
     pnl: float  # net of both legs' fees
     return_pct: float
+    side: str = "long"  # "long" (bought, then sold) or "short" (sold, then bought back)
 
 
 def trades_from_orders(orders: list[Order]) -> list[TradeRecord]:
     """Pair fills into round-trip trades, mirroring the portfolio's weighted-average
-    entry accounting. Each SELL closes against the running average entry; its PnL nets
-    out the sell fee plus the proportional share of accumulated entry fees."""
-    # per symbol: [amount, avg_entry_price, entry_fees_remaining]
+    entry accounting, for longs and shorts alike.
+
+    A fill in the direction of the open lot (or with no lot open) adds to it; a fill
+    against it closes that much and books a trade whose PnL nets out the closing fee plus
+    the proportional share of accumulated entry fees. A SELL with nothing held therefore
+    opens a short, and the BUY that covers it closes the trade.
+    """
+    # per symbol: [signed amount (+long / -short), avg entry price, entry fees remaining]
     open_lots: dict[str, list[float]] = {}
     trades: list[TradeRecord] = []
     for order in orders:
         if not order.is_filled or order.average_price is None or order.filled <= 0:
             continue
         price, amount = order.average_price, order.filled
-        if order.side == OrderSide.BUY:
+        direction = 1.0 if order.side == OrderSide.BUY else -1.0
+        lot = open_lots.get(order.symbol)
+        if lot is None or lot[0] * direction > 0:
+            # Opens a position, or adds to one on the same side.
             lot = open_lots.setdefault(order.symbol, [0.0, 0.0, 0.0])
-            new_amount = lot[0] + amount
-            lot[1] = (lot[1] * lot[0] + price * amount) / new_amount
-            lot[0] = new_amount
+            held = abs(lot[0])
+            lot[1] = (lot[1] * held + price * amount) / (held + amount)
+            lot[0] += direction * amount
             lot[2] += order.fee
-        else:
-            lot = open_lots.get(order.symbol)
-            if lot is None or lot[0] <= 0:
-                continue  # sell with no tracked entry (shouldn't happen in a backtest)
-            closed = min(amount, lot[0])
-            entry_fee_share = lot[2] * (closed / lot[0])
-            pnl = (price - lot[1]) * closed - order.fee - entry_fee_share
-            cost_basis = lot[1] * closed
-            trades.append(
-                TradeRecord(
-                    symbol=order.symbol,
-                    amount=closed,
-                    entry_price=lot[1],
-                    exit_price=price,
-                    pnl=pnl,
-                    return_pct=pnl / cost_basis if cost_basis > 0 else 0.0,
-                )
+            continue
+
+        held = abs(lot[0])
+        is_short = lot[0] < 0
+        closed = min(amount, held)
+        entry_fee_share = lot[2] * (closed / held)
+        gross = (lot[1] - price) * closed if is_short else (price - lot[1]) * closed
+        pnl = gross - order.fee - entry_fee_share
+        cost_basis = lot[1] * closed
+        trades.append(
+            TradeRecord(
+                symbol=order.symbol,
+                amount=closed,
+                entry_price=lot[1],
+                exit_price=price,
+                pnl=pnl,
+                return_pct=pnl / cost_basis if cost_basis > 0 else 0.0,
+                side="short" if is_short else "long",
             )
-            lot[0] -= closed
-            lot[2] -= entry_fee_share
-            if lot[0] <= 1e-12:
-                del open_lots[order.symbol]
+        )
+        remaining = held - closed
+        lot[0] = -remaining if is_short else remaining
+        lot[2] -= entry_fee_share
+        if remaining <= 1e-12:
+            del open_lots[order.symbol]
     return trades
 
 

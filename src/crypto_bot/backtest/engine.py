@@ -16,13 +16,17 @@ trading, one bar at a time:
   records the equity curve, and summarizes it into a :class:`BacktestResult`.
 
 Fill model = the paper broker's: market orders at the bar close, adjusted for
-configured slippage and fees. Same caveats as any close-fill backtest: no intrabar
-stop resolution, no order-book depth.
+configured slippage and fees. Protective exits are the exception: the live bot checks
+them on every poll, not once per candle, so the backtest fires a stop or take-profit
+at its own price level when a bar's range crosses it (at the bar's open if the bar gaps
+through). Within a bar the adverse move is assumed to come first — the pessimistic
+ordering. No order-book depth is modelled.
 """
 
 from __future__ import annotations
 
 import logging
+from bisect import bisect_left
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -30,7 +34,7 @@ from datetime import datetime, timezone
 from crypto_bot.backtest import metrics as m
 from crypto_bot.config import BotConfig
 from crypto_bot.core.broker import Broker, PaperBroker
-from crypto_bot.core.engine import Engine
+from crypto_bot.core.engine import Engine, candle_windows
 from crypto_bot.core.models import Candle, Order, OrderRequest
 from crypto_bot.core.portfolio import Portfolio
 from crypto_bot.exchanges.base import ExchangeAdapter
@@ -65,6 +69,9 @@ class ReplayExchange(ExchangeAdapter):
 
     def current_timestamp(self) -> int:
         return self._clock[self.cursor].timestamp
+
+    def current_candle(self, symbol: str) -> Candle:
+        return self._data[symbol][self.cursor]
 
     def load_markets(self) -> dict:
         return {}
@@ -167,11 +174,27 @@ class BacktestResult:
 class Backtester:
     """Replays pre-fetched candles through the real engine and scores the result."""
 
-    def __init__(self, config: BotConfig, logger: logging.Logger | None = None) -> None:
+    def __init__(
+        self,
+        config: BotConfig,
+        logger: logging.Logger | None = None,
+        *,
+        intrabar_stops: bool = True,
+    ) -> None:
         self.config = config
         self.log = logger or logging.getLogger(f"{LOGGER_NAME}.backtest")
+        # False reverts to checking protective exits only at each bar's close.
+        self.intrabar_stops = intrabar_stops
 
-    def run(self, candles_by_symbol: dict[str, list[Candle]]) -> BacktestResult:
+    def run(
+        self, candles_by_symbol: dict[str, list[Candle]], start_ts: int | None = None
+    ) -> BacktestResult:
+        """Replay the candles and score the result.
+
+        ``start_ts`` (epoch ms) begins trading at the first bar at or after that time,
+        using the earlier candles only to warm up indicators; by default trading starts
+        as soon as the strategy's warm-up is satisfied.
+        """
         if not candles_by_symbol:
             raise ValueError("no candle data supplied")
         aligned = align_candles(candles_by_symbol)
@@ -204,6 +227,16 @@ class Backtester:
             replay.current_timestamp,
         )
 
+        # The replay's clock: "now" is the instant the current bar closed, so that bar is
+        # the freshly completed candle a signal_on_close engine decides on.
+        tf_ms = m.timeframe_to_ms(self.config.timeframe)
+        engine._clock = lambda: (replay.current_timestamp() + tf_ms) / 1000
+
+        # Trades are scored from fills the portfolio actually booked. An order the paper
+        # broker "filled" but the portfolio refused (insufficient cash) is not a trade.
+        booked: list[Order] = []
+        engine.on_fill = booked.append
+
         total = replay.total_bars
         if total < strategy.warmup + 1:
             raise ValueError(
@@ -213,8 +246,13 @@ class Backtester:
         # Fast-forward past the warm-up (no strategy could act there), then step
         # bar by bar through the exact live decision cycle.
         replay.cursor = strategy.warmup - 1
+        if start_ts is not None:
+            stamps = [c.timestamp for c in next(iter(aligned.values()))]
+            replay.cursor = max(replay.cursor, min(bisect_left(stamps, start_ts), total - 1))
         equity_curve: list[tuple[int, float]] = []
         while True:
+            if self.intrabar_stops:
+                self._intrabar_exits(engine, replay)
             engine.run_once()
             equity_curve.append(
                 (replay.current_timestamp(), portfolio.equity(engine._last_prices))
@@ -222,7 +260,38 @@ class Backtester:
             if not replay.advance():
                 break
 
-        return self._summarize(aligned, equity_curve, engine.broker.orders, portfolio)
+        return self._summarize(aligned, equity_curve, booked, portfolio)
+
+    @staticmethod
+    def _intrabar_exits(engine: Engine, replay: ReplayExchange) -> None:
+        """Fire protective exits where they would have triggered inside the current bar.
+
+        For each open position: if the bar's adverse extreme reaches the stop, exit at
+        the stop level (or the open, if the bar gapped past it); otherwise if its
+        favourable extreme reaches take-profit, exit there; otherwise ratchet the
+        position's best price with the bar's extreme so trailing stops follow intrabar
+        highs. Checking the stop first is the pessimistic reading of an ambiguous bar.
+        """
+        for symbol, position in list(engine.portfolio.positions.items()):
+            bar = replay.current_candle(symbol)
+            short = position.is_short
+            stop = engine.risk.stop_level(position)
+            take = engine.risk.take_profit_level(position)
+            if stop is not None and (bar.high >= stop[0] if short else bar.low <= stop[0]):
+                level, kind = stop
+                fill = max(bar.open, level) if short else min(bar.open, level)
+                reason = f"{kind} hit intrabar at {fill:.4f}"
+            elif take is not None and (bar.low <= take if short else bar.high >= take):
+                fill = min(bar.open, take) if short else max(bar.open, take)
+                reason = f"take-profit hit intrabar at {fill:.4f}"
+            else:
+                position.peak_price = max(position.peak_price, bar.high)
+                position.trough_price = (
+                    min(position.trough_price, bar.low) if position.trough_price > 0 else bar.low
+                )
+                continue
+            engine._last_prices[symbol] = fill  # the paper broker fills at this price
+            engine._close_position(symbol, reason)
 
     def _summarize(
         self,
@@ -274,6 +343,19 @@ class Backtester:
             equity_curve=equity_curve,
             trades=trades,
         )
+
+
+def warmup_ms(config: BotConfig) -> int:
+    """How much history *before* a test window a backtest of ``config`` needs.
+
+    Indicators, the trend filter and the ATR all need candles before they can say
+    anything. Fetch this much extra and pass the window's start as ``start_ts`` to
+    :meth:`Backtester.run`, so the bot can trade from the first day of the window instead
+    of spending the start of it warming up.
+    """
+    strategy = build_strategy(config.strategy.name, config.strategy.params)
+    _window, fetch_limit = candle_windows(config, strategy)
+    return fetch_limit * m.timeframe_to_ms(config.timeframe)
 
 
 def align_candles(candles_by_symbol: dict[str, list[Candle]]) -> dict[str, list[Candle]]:

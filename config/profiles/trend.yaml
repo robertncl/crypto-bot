@@ -1,21 +1,22 @@
 # ── TREND profile (Supertrend) ─────────────────────────────────────────────
-# Volatility-adaptive trend-following with the Supertrend indicator — one of the
-# most popular indicators in modern crypto algo-trading. The ATR-scaled trailing
-# line gives a move room to breathe in volatile conditions and tightens when calm,
-# staying in trends far longer than an oscillator would. Medium timeframe, moderate
-# sizing, and a wide-ish stop so the trend isn't shaken out by ordinary noise.
+# Volatility-adaptive trend-following on daily bars. The Supertrend line trails
+# price by a multiple of its Average True Range, so it gives a move room to breathe
+# when volatile and tightens when calm; the bot holds until the line flips. No
+# take-profit: a trend follower earns its keep on a few big winners, so they are
+# allowed to run. Entries are only taken while the long-run trend is up.
 #
-# Run: crypto-bot run --config config/profiles/trend.yaml
+#   crypto-bot backtest --bot trend --days 365
+#   crypto-bot run --bot trend
 
 # Catalog metadata (descriptive only): `crypto-bot bots` lists it, `compare` measures it.
 bot:
   name: Trend Rider
   category: trend
-  risk_level: 3            # up to ~45% deployed, wider stops
+  risk_level: 3            # up to ~45% deployed, long-only, trend-filtered
   return_potential: high
-  summary: Rides ATR-scaled Supertrend flips and stays in big moves far longer than an oscillator.
-  best_for: Strong, persistent trends (either a bull run or, with shorts, a bear market).
-  main_risk: Repeated small losses in sideways chop.
+  summary: Rides daily Supertrend flips on three majors and holds until the trend breaks.
+  best_for: Strong, persistent up-trends; stands aside in bear markets.
+  main_risk: Sideways chop, and giving back part of a move before the line flips.
 
 mode: paper
 
@@ -29,9 +30,10 @@ symbols:
   - ETH/USDT
   - SOL/USDT
 
-# Medium timeframe — fewer, higher-quality trend flips than an intraday chart.
-timeframe: 4h
+# Daily bars: far fewer flips than an intraday chart, so far less fee drag.
+timeframe: 1d
 poll_seconds: 60
+signal_on_close: true     # decide once per completed candle, exactly as a backtest does
 
 strategy:
   name: supertrend         # buy when the trend flips up, sell when it flips down
@@ -42,9 +44,12 @@ strategy:
 risk:
   position_pct: 0.15       # 15% of equity per position
   max_open_positions: 3
-  stop_loss_pct: 0.07      # give the trend room; Supertrend exits are themselves a soft stop
-  take_profit_pct: 0.21    # 3:1 reward:risk — let winners run
+  stop_loss_pct: 0.0       # off: replaced by the volatility-scaled stop below
+  atr_stop_mult: 3.0       # disaster stop 3 ATRs below entry; the Supertrend flip is the real exit
+  take_profit_pct: 0.0     # off: capping winners is what held this bot back
+  trend_filter_period: 200 # only buy while price is above its 200-day average
   max_drawdown_pct: 0.30
+  drawdown_cooldown_days: 30 # re-arm the kill-switch after a 30-day pause
 
 paper:
   starting_cash: 10000.0

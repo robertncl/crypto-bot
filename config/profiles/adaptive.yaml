@@ -1,23 +1,21 @@
 # ── ADAPTIVE profile (regime-switching ensemble) ───────────────────────────
-# The most sophisticated recipe in the box. Instead of betting on one style of
-# market, an ADX regime filter measures trend *strength* every bar and routes the
-# decision to a specialist: Supertrend rides trending markets, RSI reversion works
-# the ranges. A trailing stop ratchets up under winners so a trend that rolls over
-# gives back a bounded slice of the gain rather than the whole ride.
+# Instead of betting on one style of market, an ADX regime filter measures trend
+# *strength* every bar and routes the decision to a specialist: Supertrend rides
+# trending markets, RSI reversion works the ranges. Entries are only taken while the
+# longer trend is up, and a volatility-scaled stop bounds each loss.
 #
-# Backtest it first, then paper-trade it:
-#   crypto-bot backtest --config config/profiles/adaptive.yaml --days 180
-#   crypto-bot run --config config/profiles/adaptive.yaml
+#   crypto-bot backtest --bot adaptive --days 365
+#   crypto-bot run --bot adaptive
 
 # Catalog metadata (descriptive only): `crypto-bot bots` lists it, `compare` measures it.
 bot:
   name: Regime Switcher
   category: adaptive
-  risk_level: 2            # up to ~30% deployed, hard stop plus trailing stop
+  risk_level: 2            # up to ~30% deployed, trend-filtered, ATR stop
   return_potential: moderate
   summary: ADX picks the specialist each bar - Supertrend in trends, RSI reversion in ranges.
   best_for: Markets that alternate between trending and ranging.
-  main_risk: Regime flips mid-trade; the stops are the exits of last resort.
+  main_risk: Regime flips mid-trade; the stop is the exit of last resort.
 
 mode: paper
 
@@ -34,6 +32,7 @@ symbols:
 # Medium timeframe: enough bars for the ADX to read the regime without whipsaw.
 timeframe: 4h
 poll_seconds: 60
+signal_on_close: true     # decide once per completed candle, exactly as a backtest does
 
 strategy:
   name: regime
@@ -50,10 +49,13 @@ strategy:
 risk:
   position_pct: 0.10         # 10% of equity per position
   max_open_positions: 3
-  stop_loss_pct: 0.06        # hard floor below entry (disaster stop)
-  trailing_stop_pct: 0.05    # ratchets under the peak — the primary profit-protecting exit
-  take_profit_pct: 0.0       # off: let the trailing stop decide when a run is over
+  stop_loss_pct: 0.0         # off: replaced by the volatility-scaled stop below
+  atr_stop_mult: 3.0         # disaster stop 3 ATRs below entry
+  trailing_stop_pct: 0.0     # off: a 5% trail sat inside normal 4h swings and cut every run short
+  take_profit_pct: 0.0       # off: the active leg's own sell signal ends the trade
+  trend_filter_period: 200   # only buy while price is above its 200-bar (~33-day) average
   max_drawdown_pct: 0.30
+  drawdown_cooldown_days: 30 # re-arm the kill-switch after a 30-day pause
 
 paper:
   starting_cash: 10000.0

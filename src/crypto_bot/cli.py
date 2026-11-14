@@ -177,15 +177,17 @@ def _cmd_backtest(args: argparse.Namespace) -> int:
         return 2
 
     # Imported here so `validate-config`/`strategies` work without ccxt installed.
-    from crypto_bot.backtest import Backtester, fetch_history
+    from crypto_bot.backtest import Backtester, fetch_history, warmup_ms
     from crypto_bot.exchanges.factory import build_exchange
 
     exchange = build_exchange(config.exchange, require_credentials=False)
     since_ms = int((time.time() - args.days * 86_400) * 1000)
+    # Fetch extra history before the window so indicators and filters are warm on day one.
+    fetch_from = since_ms - warmup_ms(config)
     candles_by_symbol = {}
     try:
         for symbol in config.symbols:
-            candles = fetch_history(exchange, symbol, config.timeframe, since_ms)
+            candles = fetch_history(exchange, symbol, config.timeframe, fetch_from)
             if not candles:
                 print(f"no history returned for {symbol}; aborting", file=sys.stderr)
                 return 1
@@ -194,7 +196,7 @@ def _cmd_backtest(args: argparse.Namespace) -> int:
     finally:
         exchange.close()
 
-    result = Backtester(config).run(candles_by_symbol)
+    result = Backtester(config).run(candles_by_symbol, start_ts=since_ms)
     print()
     print(result.format_report())
     return 0

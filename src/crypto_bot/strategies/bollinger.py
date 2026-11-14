@@ -31,6 +31,10 @@ class BollingerReversion(Strategy):
         super().__init__(params)
         self.period = int(self.params.get("period", 20))
         self.num_std = float(self.params.get("num_std", 2.0))
+        # Mean-reversion's natural target is the mean itself. With this on, a position is
+        # closed (reduce-only) as soon as the close crosses back through the middle band,
+        # instead of waiting for the far band, which a reverting price often never reaches.
+        self.exit_on_mean = bool(self.params.get("exit_on_mean", False))
         if self.period <= 0:
             raise ValueError("period must be positive")
         if self.num_std <= 0:
@@ -49,7 +53,7 @@ class BollingerReversion(Strategy):
         # the two bars compared below need only `period + 1` closes — no need to run the
         # SMA and rolling stddev across the engine's whole (~200-bar) buffer.
         closes = [c.close for c in candles[-(self.period + 1) :]]
-        lower, _middle, upper = bollinger_bands(closes, self.period, self.num_std)
+        lower, middle, upper = bollinger_bands(closes, self.period, self.num_std)
         if None in (lower[-1], lower[-2], upper[-1], upper[-2]):
             return HOLD
 
@@ -70,4 +74,17 @@ class BollingerReversion(Strategy):
                 reason=f"close pierced upper Bollinger band "
                 f"({self.period}, {self.num_std:g}σ)",
             )
+        if self.exit_on_mean:
+            if close_prev <= middle[-2] and close_now > middle[-1]:
+                return Signal(
+                    SignalType.SELL,
+                    reason=f"close reverted above the Bollinger mean ({self.period})",
+                    reduce_only=True,
+                )
+            if close_prev >= middle[-2] and close_now < middle[-1]:
+                return Signal(
+                    SignalType.BUY,
+                    reason=f"close reverted below the Bollinger mean ({self.period})",
+                    reduce_only=True,
+                )
         return HOLD
